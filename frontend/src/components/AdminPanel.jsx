@@ -24,6 +24,8 @@ export default function AdminPanel() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [toast, setToast] = useState(null);
+  const [userSearch, setUserSearch] = useState("");
+  const [userFilter, setUserFilter] = useState("ALL");
 
   // Admin Chat state
   const [threads, setThreads] = useState([]);
@@ -350,6 +352,49 @@ export default function AdminPanel() {
           })}
         </div>
       </div>
+{/* Live Admin Analytics KPI Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
+          <span className="text-xs font-bold text-slate-400 uppercase">Store Revenue</span>
+          <p className="text-2xl font-black text-[#1B4332] mt-1">
+            रु{" "}
+            {orders
+              .filter((o) => o.status !== "CANCELLED")
+              .reduce((sum, o) => sum + Number(o.total_price || 0), 0)
+              .toLocaleString()}
+          </p>
+          <span className="text-[11px] text-emerald-700 font-semibold">
+            {orders.filter((o) => o.status === "DELIVERED").length} orders delivered
+          </span>
+        </div>
+
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
+          <span className="text-xs font-bold text-slate-400 uppercase">Verified Accounts</span>
+          <p className="text-2xl font-black text-slate-900 mt-1">
+            {users.filter((u) => u.is_admin_verified || u.is_staff).length} / {users.length}
+          </p>
+          <span className="text-[11px] text-amber-700 font-semibold">
+            {pendingUsersCount} awaiting approval
+          </span>
+        </div>
+
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
+          <span className="text-xs font-bold text-slate-400 uppercase">Farmer Sell Offers</span>
+          <p className="text-2xl font-black text-slate-900 mt-1">{submissions.length}</p>
+          <span className="text-[11px] text-amber-700 font-semibold">
+            {pendingSubmissionsCount} pending review
+          </span>
+        </div>
+
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
+          <span className="text-xs font-bold text-slate-400 uppercase">Live Store Batches</span>
+          <p className="text-2xl font-black text-slate-900 mt-1">{products.length}</p>
+          <span className="text-[11px] text-emerald-700 font-semibold">
+            {products.filter((p) => Number(p.stock_quantity) > 0).length} in stock
+          </span>
+        </div>
+      </div>
+
 
       {/* 1. USERS & VERIFICATION */}
       {subTab === "users" && (
@@ -428,70 +473,111 @@ export default function AdminPanel() {
             </button>
           </form>
 
-          {/* Users List */}
+          {/* Users List with Search & Status Filter */}
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="font-bold text-slate-900">All Registered Users ({users.length})</h3>
-              <span className="text-xs text-amber-700 bg-amber-50 px-3 py-1 rounded-full font-semibold">
-                {pendingUsersCount} Pending Approval
-              </span>
+            <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h3 className="font-bold text-slate-900">All Registered Users ({users.length})</h3>
+                <span className="text-xs text-amber-700 bg-amber-50 px-3 py-1 rounded-full font-semibold">
+                  {pendingUsersCount} Pending Approval
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  placeholder="Search by name, email, phone, or location..."
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  className="flex-1 min-w-[200px] px-3.5 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-[#1B4332]"
+                />
+                {["ALL", "PENDING", "VERIFIED", "FARMER", "CUSTOMER"].map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setUserFilter(f)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                      userFilter === f
+                        ? "bg-[#1B4332] text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="divide-y divide-slate-100">
-              {users.map((u) => (
-                <div
-                  key={u.id}
-                  className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-bold text-slate-900">{u.full_name}</p>
-                      <select
-                        value={u.role}
-                        onChange={(e) => handleChangeUserRole(u.id, e.target.value)}
-                        className="text-xs px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold"
-                      >
-                        <option value="CUSTOMER">CUSTOMER</option>
-                        <option value="FARMER">FARMER</option>
-                        <option value="ADMIN">ADMIN</option>
-                      </select>
-                      {u.is_admin_verified || u.is_staff ? (
-                        <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Verified
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
-                          <ShieldAlert className="w-3.5 h-3.5" /> Pending Approval
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Email: <strong>{u.email || "—"}</strong> | Phone:{" "}
-                      <strong>{u.phone_number || "—"}</strong> | Location:{" "}
-                      <strong>{u.location || "—"}</strong>
-                    </p>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleToggleVerify(u.id)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                        u.is_admin_verified
-                          ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
-                          : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                      }`}
-                    >
-                      {u.is_admin_verified ? "Revoke Access" : "Verify & Approve"}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteUser(u.id, u.full_name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
-                      title="Delete User"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+            <div className="divide-y divide-slate-100 max-h-[520px] overflow-y-auto">
+              {users
+                .filter((u) => {
+                  const q = userSearch.toLowerCase();
+                  const matchesSearch =
+                    (u.full_name || "").toLowerCase().includes(q) ||
+                    (u.email || "").toLowerCase().includes(q) ||
+                    (u.phone_number || "").toLowerCase().includes(q) ||
+                    (u.location || "").toLowerCase().includes(q);
+                  if (!matchesSearch) return false;
+                  if (userFilter === "PENDING") return !u.is_admin_verified && !u.is_staff;
+                  if (userFilter === "VERIFIED") return u.is_admin_verified || u.is_staff;
+                  if (userFilter === "FARMER") return u.role === "FARMER";
+                  if (userFilter === "CUSTOMER") return u.role === "CUSTOMER";
+                  return true;
+                })
+                .map((u) => (
+                  <div
+                    key={u.id}
+                    className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-bold text-slate-900">{u.full_name}</p>
+                        <select
+                          value={u.role}
+                          onChange={(e) => handleChangeUserRole(u.id, e.target.value)}
+                          className="text-xs px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold"
+                        >
+                          <option value="CUSTOMER">CUSTOMER</option>
+                          <option value="FARMER">FARMER</option>
+                          <option value="ADMIN">ADMIN</option>
+                        </select>
+                        {u.is_admin_verified || u.is_staff ? (
+                          <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Verified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                            <ShieldAlert className="w-3.5 h-3.5" /> Pending Approval
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Email: <strong>{u.email || "—"}</strong> | Phone:{" "}
+                        <strong>{u.phone_number || "—"}</strong> | Location:{" "}
+                        <strong>{u.location || "—"}</strong>
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleToggleVerify(u.id)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          u.is_admin_verified
+                            ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
+                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                        }`}
+                      >
+                        {u.is_admin_verified ? "Revoke Access" : "Verify & Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(u.id, u.full_name)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
+                        title="Delete User"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
         </div>

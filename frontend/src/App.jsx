@@ -138,7 +138,19 @@ export default function App() {
   const [quickViewQty, setQuickViewQty] = useState(1);
 
   // Interactive Basket Drawer
-  const [basket, setBasket] = useState([]);
+const [basket, setBasket] = useState(() => {
+  try {
+    const saved = localStorage.getItem("krishimart_basket");
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+});
+const [paymentMethod, setPaymentMethod] = useState("COD");
+
+useEffect(() => {
+  localStorage.setItem("krishimart_basket", JSON.stringify(basket));
+}, [basket]);  
   const [basketDrawerOpen, setBasketDrawerOpen] = useState(false);
   const [checkoutAddress, setCheckoutAddress] = useState("");
   const [checkoutPhone, setCheckoutPhone] = useState("");
@@ -151,6 +163,23 @@ export default function App() {
     phone_number: "",
     location: "",
   });
+
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: "",
+    new_password: "",
+  });
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.post("/accounts/change-password/", passwordForm);
+      showToast(res.data.message || "Password updated!");
+      setPasswordForm({ current_password: "", new_password: "" });
+      setProfileModalOpen(false);
+    } catch (err) {
+      showToast(err.response?.data?.error || "Failed to change password.", "error");
+    }
+  };
 
   // "Sell Your Products" Form, Photo Preview & History
   const [mySubmissions, setMySubmissions] = useState([]);
@@ -324,7 +353,7 @@ export default function App() {
         await api.post("/marketplace/orders/", {
           product: item.id,
           quantity: item.qty,
-          delivery_address: checkoutAddress.trim(),
+          delivery_address: `${checkoutAddress.trim()} [${paymentMethod}]`,
           contact_phone: checkoutPhone.trim(),
         });
       }
@@ -1781,6 +1810,31 @@ export default function App() {
                     className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Payment Method *
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "COD", label: "💵 Cash on Delivery" },
+                      { id: "ESEWA", label: "🟢 eSewa Wallet" },
+                      { id: "KHALTI", label: "🟣 Khalti Wallet" },
+                    ].map((pm) => (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(pm.id)}
+                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
+                          paymentMethod === pm.id
+                            ? "border-[#14532D] bg-emerald-50 text-[#14532D]"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {pm.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button
                   type="submit"
                   disabled={checkingOut}
@@ -1794,69 +1848,96 @@ export default function App() {
         </div>
       )}
 
-      {/* EDIT USER PROFILE MODAL */}
+    {/* EDIT USER PROFILE & PASSWORD MODAL */}
       {profileModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <form
-            onSubmit={handleUpdateProfile}
-            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-extrabold text-slate-900">Edit Your Profile</h3>
-              <button
-                type="button"
-                onClick={() => setProfileModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
-              <input
-                type="text"
-                required
-                value={profileForm.full_name}
-                onChange={(e) => setProfileForm({ ...profileForm, full_name: e.target.value })}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
-              <input
-                type="text"
-                value={profileForm.phone_number}
-                onChange={(e) => setProfileForm({ ...profileForm, phone_number: e.target.value })}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Default Location / Address
-              </label>
-              <input
-                type="text"
-                value={profileForm.location}
-                onChange={(e) => setProfileForm({ ...profileForm, location: e.target.value })}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setProfileModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer"
-              >
-                Cancel
-              </button>
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <form onSubmit={handleUpdateProfile} className="space-y-3.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-extrabold text-slate-900">Edit Your Profile</h3>
+                <button
+                  type="button"
+                  onClick={() => setProfileModalOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={profileForm.full_name}
+                  onChange={(e) => setProfileForm({ ...profileForm, full_name: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
+                <input
+                  type="text"
+                  value={profileForm.phone_number}
+                  onChange={(e) =>
+                    setProfileForm({ ...profileForm, phone_number: e.target.value })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Default Location / Address
+                </label>
+                <input
+                  type="text"
+                  value={profileForm.location}
+                  onChange={(e) => setProfileForm({ ...profileForm, location: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
               <button
                 type="submit"
-                className="flex-1 py-2.5 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
               >
-                Save Changes
+                Save Profile Details
               </button>
-            </div>
-          </form>
+            </form>
+
+            {/* Change Password Section */}
+            <form
+              onSubmit={handleChangePassword}
+              className="pt-4 border-t border-slate-200 space-y-3"
+            >
+              <h4 className="text-sm font-extrabold text-slate-900">Change Password</h4>
+              <input
+                type="password"
+                required
+                placeholder="Current Password *"
+                value={passwordForm.current_password}
+                onChange={(e) =>
+                  setPasswordForm({ ...passwordForm, current_password: e.target.value })
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+              <input
+                type="password"
+                required
+                minLength={8}
+                placeholder="New Password (min 8 chars) *"
+                value={passwordForm.new_password}
+                onChange={(e) =>
+                  setPasswordForm({ ...passwordForm, new_password: e.target.value })
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
+              >
+                Update Password
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

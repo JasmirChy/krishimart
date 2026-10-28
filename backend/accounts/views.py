@@ -1,6 +1,4 @@
 from django.shortcuts import render
-
-# Create your views here.
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -47,9 +45,32 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        current_password = request.data.get("current_password", "")
+        new_password = request.data.get("new_password", "")
+
+        if not request.user.check_password(current_password):
+            return Response(
+                {"error": "Current password is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(new_password) < 8:
+            return Response(
+                {"error": "New password must be at least 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        request.user.set_password(new_password)
+        request.user.save()
+        return Response({"message": "Password updated successfully!"})
+
+
 class AdminUserViewSet(viewsets.ModelViewSet):
     """
-    Admin endpoint to list, add, verify/unverify, update, or delete any user.
+    Admin endpoint to list, add, verify/unverify, reset password, update, or delete any user.
     """
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -67,3 +88,16 @@ class AdminUserViewSet(viewsets.ModelViewSet):
                 "user": UserSerializer(user).data,
             }
         )
+
+    @action(detail=True, methods=["post"])
+    def reset_password(self, request, pk=None):
+        user = self.get_object()
+        new_password = request.data.get("new_password", "").strip()
+        if len(new_password) < 8:
+            return Response(
+                {"error": "Password must be at least 8 characters long."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(new_password)
+        user.save()
+        return Response({"message": f"Password reset for {user.full_name}."})

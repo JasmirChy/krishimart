@@ -163,7 +163,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         quantity = serializer.validated_data["quantity"]
         total_price = product.price * quantity
 
-        # Deduct stock quantity in PostgreSQL
         if product.stock_quantity >= quantity:
             product.stock_quantity -= quantity
         else:
@@ -171,3 +170,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         product.save()
 
         serializer.save(buyer=self.request.user, total_price=total_price)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        old_status = instance.status
+        updated_order = serializer.save()
+
+        # Restore stock quantity if order transitions to CANCELLED
+        if old_status != "CANCELLED" and updated_order.status == "CANCELLED":
+            product = updated_order.product
+            product.stock_quantity += updated_order.quantity
+            product.save()
