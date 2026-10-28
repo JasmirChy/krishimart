@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Product, SellProductSubmission, FarmerPurchase, Order
+from .models import Product, SellProductSubmission, FarmerPurchase, Order, StoryReview
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -90,3 +90,29 @@ class OrderSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "buyer", "total_price", "created_at"]
+
+
+class StoryReviewSerializer(serializers.ModelSerializer):
+    author_name = serializers.CharField(source="author.full_name", read_only=True)
+    author_avatar = serializers.ImageField(source="author.profile_picture", read_only=True)
+    author_role = serializers.CharField(source="author.role", read_only=True)
+    author_location = serializers.CharField(source="author.location", read_only=True)
+
+    class Meta:
+        model = StoryReview
+        fields = [
+            "id",
+            "author",
+            "author_name",
+            "author_avatar",
+            "author_role",
+            "author_location",
+            "story_type",
+            "title",
+            "content",
+            "rating",
+            "image",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = ["id", "author", "created_at"]

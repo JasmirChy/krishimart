@@ -17,14 +17,20 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
         user = self.request.user
         user_id = self.request.query_params.get("user_id")
 
-        # When Admin opens a specific user's thread, mark that user's messages as read
-        if user_id and (user.is_staff or user.role == "ADMIN"):
-            ChatMessage.objects.filter(
-                conversation_user_id=user_id,
-                is_admin_reply=False,
-                is_read=False,
-            ).update(is_read=True)
-            return ChatMessage.objects.filter(conversation_user_id=user_id).order_by("created_at")
+        if user.is_staff or user.role == "ADMIN":
+            # Allow Admin to delete or inspect any message across all user threads
+            if self.action in ["destroy", "retrieve", "update", "partial_update"]:
+                return ChatMessage.objects.all()
+
+            if user_id:
+                ChatMessage.objects.filter(
+                    conversation_user_id=user_id,
+                    is_admin_reply=False,
+                    is_read=False,
+                ).update(is_read=True)
+                return ChatMessage.objects.filter(conversation_user_id=user_id).order_by(
+                    "created_at"
+                )
 
         # When a Customer/Farmer opens their chat, mark Admin replies as read
         ChatMessage.objects.filter(
@@ -73,11 +79,34 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    def destroy(self, request, *args, **kwargs):
+        msg = self.get_object()
+        user = request.user
+        # Admin can delete ANY message (both sent and received);
+        # Regular users can only delete their own sent messages
+        if not (user.is_staff or user.role == "ADMIN") and (
+            msg.sender_id != user.id or msg.is_admin_reply
+        ):
+            return Response(
+                {"error": "You can only delete your own sent messages."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        msg.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["delete"], permission_classes=[IsSiteAdmin])
+    def clear_thread(self, request):
+        user_id = request.query_params.get("user_id")
+        if not user_id:
+            return Response(
+                {"error": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted_count, _ = ChatMessage.objects.filter(conversation_user_id=user_id).delete()
+        return Response({"message": f"Cleared {deleted_count} messages from conversation."})
+
     @action(detail=False, methods=["get"], permission_classes=[IsSiteAdmin])
     def threads(self, request):
-        """
-        Returns all users annotated with unread message count and latest message time.
-        """
         users = (
             User.objects.annotate(
                 total_messages=Count("conversation_messages"),

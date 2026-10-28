@@ -27,7 +27,8 @@ import {
   Camera,
   LogIn,
   Receipt,
-  DollarSign,
+  Star,
+  BookOpen,
 } from "lucide-react";
 import api, { BACKEND_URL } from "./api";
 import AuthView from "./components/AuthView";
@@ -141,14 +142,19 @@ export default function App() {
   const [selectedDistrict, setSelectedDistrict] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Farmer's Sales to Admin Ledger State
+  // Real Stories & Reviews
+  const [stories, setStories] = useState([]);
+  const [storyModalOpen, setStoryModalOpen] = useState(false);
+  const [storyForm, setStoryForm] = useState({ title: "", content: "", rating: 5 });
+
+  // Farmer's Sales to Admin Ledger
   const [farmerSales, setFarmerSales] = useState([]);
 
   // Product Quick-View Modal
   const [quickViewProduct, setQuickViewProduct] = useState(null);
   const [quickViewQty, setQuickViewQty] = useState(1);
 
-  // Interactive Basket Drawer
+  // Persistent Basket Drawer & Payment Method
   const [basket, setBasket] = useState(() => {
     try {
       const saved = localStorage.getItem("krishimart_basket");
@@ -167,7 +173,7 @@ export default function App() {
     localStorage.setItem("krishimart_basket", JSON.stringify(basket));
   }, [basket]);
 
-  // Profile Modal State
+  // Profile & Password Modal State
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({
     full_name: "",
@@ -181,7 +187,7 @@ export default function App() {
     new_password: "",
   });
 
-  // "Sell Your Products" Farmer Portal State
+  // Farmer Wholesale Portal State
   const [mySubmissions, setMySubmissions] = useState([]);
   const [sellImagePreview, setSellImagePreview] = useState(null);
   const [sellForm, setSellForm] = useState({
@@ -196,7 +202,7 @@ export default function App() {
     image: null,
   });
 
-  // Live Chat
+  // Live Chat State
   const [messages, setMessages] = useState([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [chatInput, setChatInput] = useState("");
@@ -245,15 +251,18 @@ export default function App() {
 
   const isVerifiedOrAdmin =
     user && (user.is_admin_verified || user.is_staff || user.role === "ADMIN");
-
   const isFarmer = user && (user.role === "FARMER" || user.role === "ADMIN" || user.is_staff);
 
-  const loadPublicProducts = async () => {
+  const loadPublicData = async () => {
     try {
-      const res = await api.get("/marketplace/products/");
-      setDbProducts(res.data);
+      const [prodRes, storyRes] = await Promise.all([
+        api.get("/marketplace/products/"),
+        api.get("/marketplace/stories/"),
+      ]);
+      setDbProducts(prodRes.data);
+      setStories(storyRes.data);
     } catch (err) {
-      console.error("Failed to load products:", err);
+      console.error("Public data sync error:", err);
     }
   };
 
@@ -275,13 +284,20 @@ export default function App() {
     }
   };
 
+  // Real-time background polling every 4 seconds
   useEffect(() => {
-    loadPublicProducts();
+    loadPublicData();
     if (user) {
       loadUserData();
     }
+    const interval = setInterval(() => {
+      loadPublicData();
+      if (user) loadUserData();
+    }, 4000);
+    return () => clearInterval(interval);
   }, [user, activeTab]);
 
+  // Poll Chat Messages
   useEffect(() => {
     if (!isVerifiedOrAdmin || (!chatDrawerOpen && activeTab !== "chat")) return;
     const fetchChat = async () => {
@@ -297,6 +313,15 @@ export default function App() {
     const timer = setInterval(fetchChat, 3000);
     return () => clearInterval(timer);
   }, [user, chatDrawerOpen, activeTab]);
+
+  useEffect(() => {
+    if (chatTabScrollRef.current) {
+      chatTabScrollRef.current.scrollTop = chatTabScrollRef.current.scrollHeight;
+    }
+    if (chatDrawerScrollRef.current) {
+      chatDrawerScrollRef.current.scrollTop = chatDrawerScrollRef.current.scrollHeight;
+    }
+  }, [messages.length, chatDrawerOpen, activeTab]);
 
   const handleLogout = () => {
     localStorage.removeItem("krishimart_access");
@@ -365,6 +390,7 @@ export default function App() {
       setBasket([]);
       setBasketDrawerOpen(false);
       await loadUserData();
+      await loadPublicData();
       showToast("Order confirmed! Track delivery in My Orders.");
       setActiveTab("orders");
     } catch {
@@ -379,9 +405,28 @@ export default function App() {
       await api.patch(`/marketplace/orders/${orderId}/`, { status: "CANCELLED" });
       showToast(`Order #${orderId} has been cancelled.`);
       loadUserData();
-      loadPublicProducts();
+      loadPublicData();
     } catch {
       showToast("Could not cancel order.", "error");
+    }
+  };
+
+  const handleStorySubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/marketplace/stories/", {
+        title: storyForm.title.trim(),
+        content: storyForm.content.trim(),
+        rating: storyForm.rating,
+        story_type: user.role === "FARMER" ? "FARMER_STORY" : "BUYER_REVIEW",
+      });
+      showToast(
+        "Thank you! Your story/review was sent to the Admin and will appear once approved."
+      );
+      setStoryModalOpen(false);
+      setStoryForm({ title: "", content: "", rating: 5 });
+    } catch {
+      showToast("Failed to submit story/review.", "error");
     }
   };
 
@@ -418,7 +463,7 @@ export default function App() {
     e.preventDefault();
     try {
       const res = await api.post("/accounts/change-password/", passwordForm);
-      showToast(res.data.message || "Password updated!");
+      showToast(res.data.message || "Password updated successfully!");
       setPasswordForm({ current_password: "", new_password: "" });
       setProfileModalOpen(false);
     } catch (err) {
@@ -458,7 +503,6 @@ export default function App() {
       });
       loadUserData();
     } catch (err) {
-      console.error("Sell submit error:", err.response?.data);
       const data = err.response?.data;
       if (data && typeof data === "object") {
         const firstKey = Object.keys(data)[0];
@@ -467,6 +511,16 @@ export default function App() {
       } else {
         showToast(err.response?.data?.detail || "Failed to submit harvest batch.", "error");
       }
+    }
+  };
+
+  const handleDeleteSubmission = async (subId, name) => {
+    try {
+      await api.delete(`/marketplace/sell-submissions/${subId}/`);
+      showToast(`Withdrew "${name}" offer.`);
+      loadUserData();
+    } catch {
+      showToast("Could not withdraw offer.", "error");
     }
   };
 
@@ -480,6 +534,15 @@ export default function App() {
       setMessages(res.data);
     } catch {
       showToast("Failed to send message.", "error");
+    }
+  };
+
+  const handleDeleteMyMessage = async (msgId) => {
+    try {
+      await api.delete(`/chat/messages/${msgId}/`);
+      setMessages((prev) => prev.filter((m) => m.id !== msgId));
+    } catch {
+      showToast("You can only delete your own sent messages.", "error");
     }
   };
 
@@ -507,13 +570,15 @@ export default function App() {
   const basketTotal = basket.reduce((sum, item) => sum + Number(item.price) * item.qty, 0);
   const totalBasketItems = basket.reduce((sum, item) => sum + item.qty, 0);
 
-  // Farmer's Total Sold Revenue Calculation
   const totalFarmerEarnings = farmerSales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
   const totalFarmerWeight = farmerSales.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
 
+  const approvedFarmerStories = stories.filter((s) => s.story_type === "FARMER_STORY");
+  const approvedBuyerReviews = stories.filter((s) => s.story_type === "BUYER_REVIEW");
+
   return (
     <div className="min-h-screen bg-[#F6F8F5] text-slate-900 flex flex-col font-sans pb-20 md:pb-0 relative">
-      {/* Toast Notification */}
+      {/* FLOATING TOAST NOTIFICATION */}
       {toast && (
         <div
           className={`fixed top-20 right-4 z-50 px-5 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition ${
@@ -525,7 +590,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 1. TOP UTILITY BAR */}
+      {/* 1. TOP DARK GREEN UTILITY BAR */}
       <div className="bg-[#0F3822] text-emerald-100 text-[11px] sm:text-xs py-1.5 sm:py-2 px-3 sm:px-8 border-b border-emerald-900">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -533,22 +598,23 @@ export default function App() {
               <Phone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" /> +977-1-4423456
             </span>
             <span className="hidden md:inline-flex items-center gap-1.5 text-emerald-200">
-              • <TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Kalimati Mandi Rate: Tomato रु 65/kg Today
+              • <TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Kalimati Mandi Live Rate:
+              Tomato रु 65/kg Today
             </span>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             <span className="bg-emerald-900/80 px-2 py-0.5 rounded text-[10px] font-semibold text-amber-300">
               EN / नेपाली
             </span>
-            <span className="flex items-center gap-1 font-medium">
-              <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" />{" "}
-              {user?.location || "Nepal Agricultural Hub"}
+            <span className="flex items-center gap-1 font-medium truncate max-w-[160px] sm:max-w-none">
+              <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />{" "}
+              {user?.location || "Dhangadhi & Kathmandu Hub"}
             </span>
           </div>
         </div>
       </div>
 
-      {/* 2. MAIN HEADER (DARAZ STYLE) */}
+      {/* 2. MAIN BRAND & SEARCH HEADER */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 shadow-xs">
         <div className="max-w-7xl mx-auto px-3 sm:px-8 py-2.5 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4">
           <div
@@ -563,12 +629,12 @@ export default function App() {
                 KrishiMart
               </span>
               <span className="hidden xs:block text-[10px] text-slate-500 font-medium">
-                Farm-Fresh Produce
+                Empowering Farmers, Fresh Produce
               </span>
             </div>
           </div>
 
-          {/* Search Bar */}
+          {/* Desktop Search Bar */}
           <div className="hidden lg:flex items-center flex-1 max-w-xl bg-slate-100/90 border border-slate-200 rounded-full px-2 py-1 focus-within:border-[#14532D] focus-within:bg-white transition">
             <span className="px-3 py-1 text-xs font-bold text-slate-600 border-r border-slate-200">
               All ▾
@@ -577,13 +643,20 @@ export default function App() {
               type="text"
               placeholder="Search organic spinach, Mustang apples, Jumla Marsi rice..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (activeTab !== "home" && activeTab !== "marketplace") {
+                  setActiveTab("home");
+                }
+              }}
               className="flex-1 px-3 py-1.5 text-xs bg-transparent outline-none text-slate-800"
             />
             <button
               onClick={() => {
                 setActiveTab("home");
-                document.getElementById("fresh-harvests")?.scrollIntoView({ behavior: "smooth" });
+                document
+                  .getElementById("fresh-harvests")
+                  ?.scrollIntoView({ behavior: "smooth" });
               }}
               className="w-8 h-8 rounded-full bg-[#14532D] text-white flex items-center justify-center hover:bg-[#1B4332] cursor-pointer"
             >
@@ -591,12 +664,12 @@ export default function App() {
             </button>
           </div>
 
-          {/* Right Controls */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Right User Controls */}
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <button
               onClick={() => setBasketDrawerOpen(true)}
               className="relative p-2 sm:p-2.5 rounded-full bg-slate-100 hover:bg-amber-50 text-slate-700 cursor-pointer"
-              title="Your Basket"
+              title="Open Your Basket"
             >
               <ShoppingBag className="w-4 h-4 text-[#14532D]" />
               <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-extrabold">
@@ -621,11 +694,11 @@ export default function App() {
                   )}
                 </button>
 
-                {/* Profile Avatar Badge */}
+                {/* User Avatar Badge with Real Profile Picture */}
                 <button
                   onClick={() => setProfileModalOpen(true)}
                   className="flex items-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-full p-1 sm:pl-1.5 sm:pr-3 sm:py-1 text-left transition cursor-pointer"
-                  title="Click to view & change profile picture"
+                  title="Click to Edit Profile & Password"
                 >
                   <div className="w-8 h-8 rounded-full bg-emerald-800 text-white flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden border border-emerald-700">
                     {user.profile_picture ? (
@@ -648,12 +721,12 @@ export default function App() {
                     </p>
                     <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      {user.role === "FARMER" ? "Farmer" : user.role === "ADMIN" ? "Admin" : "Buyer"}
+                      {isVerifiedOrAdmin ? `Verified ${user.role}` : "Pending Approval"}
                     </p>
                   </div>
                 </button>
 
-                {/* ONLY FARMERS & ADMIN GET THE SELL BUTTON */}
+                {/* Strictly Farmer / Admin Only: "+ Sell Harvest" */}
                 {isFarmer && (
                   <button
                     onClick={() => setActiveTab("sell")}
@@ -696,7 +769,34 @@ export default function App() {
           </div>
         </div>
 
-        {/* Sub-Navigation Bar */}
+        {/* Mobile Search Bar (Visible on Phones & Tablets < 1024px) */}
+        <div className="lg:hidden px-3 pb-2.5">
+          <div className="flex items-center bg-slate-100 border border-slate-200 rounded-full px-3 py-1.5">
+            <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
+            <input
+              type="text"
+              placeholder="Search vegetables, Mustang apples, Marsi rice..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (activeTab !== "home" && activeTab !== "marketplace") {
+                  setActiveTab("marketplace");
+                }
+              }}
+              className="w-full text-xs bg-transparent outline-none text-slate-800"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="text-slate-400 hover:text-slate-700 ml-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 3. DESKTOP / TABLET SUB-NAVIGATION BAR */}
         <div className="hidden md:block bg-white border-t border-slate-100">
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-2 flex flex-wrap items-center justify-between gap-3">
             <nav className="flex flex-wrap items-center gap-1 sm:gap-2">
@@ -704,10 +804,22 @@ export default function App() {
                 { id: "home", label: "Home" },
                 { id: "marketplace", label: "Shop Products" },
                 ...(isFarmer ? [{ id: "sell", label: "Sell Your Harvest" }] : []),
-                ...(isFarmer ? [{ id: "farmer_sales", label: `Sold to Admin (${farmerSales.length})` }] : []),
+                ...(isFarmer
+                  ? [{ id: "farmer_sales", label: `Sold to Admin (${farmerSales.length})` }]
+                  : []),
                 ...(user ? [{ id: "orders", label: `My Orders (${myOrders.length})` }] : []),
-                { id: "stories", label: "Farmer Stories" },
-                ...(user ? [{ id: "chat", label: "Chat with Admin" }] : []),
+                { id: "stories", label: "Farmer Stories & Reviews" },
+                ...(user
+                  ? [
+                      {
+                        id: "chat",
+                        label:
+                          unreadChatCount > 0
+                            ? `Chat with Admin (${unreadChatCount} new)`
+                            : "Chat with Admin",
+                      },
+                    ]
+                  : []),
               ].map((item) => (
                 <button
                   key={item.id}
@@ -739,16 +851,55 @@ export default function App() {
         </div>
       </header>
 
-      {/* MAIN VIEW */}
+      {/* UNVERIFIED USER BANNER (IF LOGGED IN BUT NOT YET APPROVED BY ADMIN) */}
+      {user && !isVerifiedOrAdmin && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-center text-xs text-amber-900 flex flex-wrap items-center justify-center gap-3">
+          <span className="font-medium">
+            ⏳ Namaste <strong>{user.full_name}</strong>! Your account is currently{" "}
+            <strong>Pending Admin Verification</strong>. You can browse the store, and full buying
+            / selling features will unlock as soon as the Admin approves your account.
+          </span>
+          <button
+            onClick={fetchCurrentUser}
+            className="px-3 py-1 rounded-lg bg-[#14532D] text-white font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+          >
+            <RefreshCw className="w-3 h-3" /> Check Status
+          </button>
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
       <main className="flex-1">
-        {/* ADMIN CONTROL PANEL */}
-        {activeTab === "admin" && user && (user.is_staff || user.role === "ADMIN") && (
+        {/* ADMIN PANEL VIEW */}
+        {activeTab === "admin" && (
           <div className="max-w-7xl mx-auto px-3 sm:px-8 py-6 sm:py-8">
-            <AdminPanel />
+            {user && (user.is_staff || user.role === "ADMIN") ? (
+              <AdminPanel />
+            ) : (
+              <div className="max-w-md mx-auto my-12 bg-white p-6 sm:p-8 rounded-3xl shadow-lg border border-red-200 text-center space-y-4">
+                <ShieldAlert className="w-12 h-12 text-red-600 mx-auto" />
+                <h2 className="text-xl font-extrabold text-slate-900">
+                  Admin Privileges Required
+                </h2>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Please sign in with an Admin account to access the Admin Control Panel.
+                </p>
+                <button
+                  onClick={() => {
+                    if (user) handleLogout();
+                    setAuthModalTab("login");
+                    setAuthModalOpen(true);
+                  }}
+                  className="w-full py-3 bg-[#14532D] text-white font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  Sign In as Admin
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* FARMER'S "SOLD TO ADMIN / MANAGER" REPORT */}
+        {/* FARMER'S "SOLD TO ADMIN / MANAGER" FINANCIAL REPORT */}
         {activeTab === "farmer_sales" && isFarmer && (
           <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -760,7 +911,7 @@ export default function App() {
                   Crops Sold to KrishiMart Admin
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Detailed payout ledger of all harvests bought by the KrishiMart management.
+                  Official payout ledger of all harvests purchased from you by KrishiMart.
                 </p>
               </div>
               <button
@@ -771,67 +922,90 @@ export default function App() {
               </button>
             </div>
 
-            {/* Farmer Earnings KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">Total Revenue Earned</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">
+                  Total Revenue Earned
+                </span>
                 <p className="text-2xl font-black text-[#14532D] mt-1">
                   रु {totalFarmerEarnings.toLocaleString()}
                 </p>
-                <span className="text-[11px] text-emerald-700 font-semibold">Direct farmer payouts</span>
+                <span className="text-[11px] text-emerald-700 font-semibold">
+                  Direct farmer payouts
+                </span>
               </div>
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">Total Crops Delivered</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">
+                  Total Crops Delivered
+                </span>
                 <p className="text-2xl font-black text-slate-900 mt-1">
-                  {totalFarmerWeight.toLocaleString()} <span className="text-sm font-normal text-slate-500">kg/units</span>
+                  {totalFarmerWeight.toLocaleString()}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </p>
-                <span className="text-[11px] text-slate-500 font-semibold">Collected by KrishiMart</span>
+                <span className="text-[11px] text-slate-500 font-semibold">
+                  Collected by KrishiMart
+                </span>
               </div>
               <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">Successful Batches Sold</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">
+                  Successful Batches Sold
+                </span>
                 <p className="text-2xl font-black text-slate-900 mt-1">{farmerSales.length}</p>
-                <span className="text-[11px] text-emerald-700 font-semibold">Settled transactions</span>
+                <span className="text-[11px] text-emerald-700 font-semibold">
+                  Verified transactions
+                </span>
               </div>
             </div>
 
-            {/* Sold Ledger Table */}
             {farmerSales.length === 0 ? (
               <div className="bg-white rounded-3xl p-12 text-center text-slate-500 border border-slate-200">
-                You haven't had crops purchased by the Admin yet. Submit your harvest in "Sell Your Harvest"!
+                No crops have been purchased by the Admin yet. Submit your harvest under "Sell Your
+                Harvest"!
               </div>
             ) : (
-              <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-2xs divide-y divide-slate-100">
-                <div className="p-4 bg-slate-50 font-bold text-xs text-slate-600 grid grid-cols-12 gap-2">
-                  <span className="col-span-3">Crop Name</span>
-                  <span className="col-span-2">Quantity Sold</span>
-                  <span className="col-span-2">Agreed Rate</span>
-                  <span className="col-span-2">Total Payout</span>
-                  <span className="col-span-2">Payment Status</span>
-                  <span className="col-span-1 text-right">Date</span>
-                </div>
+              <div className="grid sm:grid-cols-2 gap-4">
                 {farmerSales.map((s) => (
-                  <div key={s.id} className="p-4 text-xs grid grid-cols-12 gap-2 items-center hover:bg-slate-50/70">
-                    <div className="col-span-3">
-                      <p className="font-extrabold text-slate-900 text-sm">{s.crop_name}</p>
-                      <span className="text-[11px] text-emerald-700 font-semibold">{s.category}</span>
-                    </div>
-                    <div className="col-span-2 font-bold text-slate-800">
-                      {s.quantity} {s.unit}
-                    </div>
-                    <div className="col-span-2 text-slate-700">
-                      रु {s.agreed_wholesale_rate} / {s.unit}
-                    </div>
-                    <div className="col-span-2 font-black text-base text-[#14532D]">
-                      रु {s.total_amount}
-                    </div>
-                    <div className="col-span-2">
+                  <div
+                    key={s.id}
+                    className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-700 uppercase">
+                          {s.category}
+                        </span>
+                        <h3 className="font-extrabold text-base text-slate-900">{s.crop_name}</h3>
+                        <p className="text-xs text-slate-500">
+                          Sold on {new Date(s.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
                         {s.payment_status} ({s.payment_method})
                       </span>
                     </div>
-                    <div className="col-span-1 text-right text-slate-400">
-                      {new Date(s.created_at).toLocaleDateString()}
+                    <div className="p-3 bg-slate-50 rounded-2xl text-xs space-y-1">
+                      <div className="flex justify-between">
+                        <span>Quantity Sold:</span>
+                        <strong>
+                          {s.quantity} {s.unit}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Agreed Wholesale Rate:</span>
+                        <strong>
+                          रु {s.agreed_wholesale_rate} / {s.unit}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between border-t border-slate-200 pt-1 text-sm font-black text-[#14532D]">
+                        <span>Total Payout Received:</span>
+                        <span>रु {s.total_amount}</span>
+                      </div>
                     </div>
+                    {s.admin_notes && (
+                      <p className="text-xs bg-emerald-50 p-2.5 rounded-xl text-emerald-950 border border-emerald-100">
+                        <strong>Admin Receipt Note:</strong> {s.admin_notes}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -839,7 +1013,7 @@ export default function App() {
           </div>
         )}
 
-        {/* "SELL YOUR HARVEST" (STRICTLY FOR FARMERS) */}
+        {/* DEDICATED "SELL YOUR HARVEST" PORTAL (FARMERS ONLY) */}
         {activeTab === "sell" && isFarmer && (
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
             <div className="grid lg:grid-cols-5 gap-6 sm:gap-8">
@@ -855,7 +1029,8 @@ export default function App() {
                     Sell Your Harvest to KrishiMart Admin
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    Set your <strong>Wholesale Rate (थोक मूल्य)</strong>. Our Admin reviews and buys directly from you.
+                    Enter your <strong>Wholesale Price (थोक मूल्य)</strong>, crop description,
+                    contact number, and farm pickup location below.
                   </p>
                 </div>
 
@@ -867,7 +1042,7 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Cabbage"
+                      placeholder="e.g. Organic Local Cauliflower"
                       value={sellForm.vegetable_name}
                       onChange={(e) =>
                         setSellForm({ ...sellForm, vegetable_name: e.target.value })
@@ -876,7 +1051,9 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Category *</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Category *
+                    </label>
                     <select
                       value={sellForm.category}
                       onChange={(e) => setSellForm({ ...sellForm, category: e.target.value })}
@@ -892,11 +1069,13 @@ export default function App() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Quantity *</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Quantity Available *
+                    </label>
                     <input
                       type="number"
                       required
-                      placeholder="e.g. 20"
+                      placeholder="e.g. 80"
                       value={sellForm.quantity}
                       onChange={(e) => setSellForm({ ...sellForm, quantity: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm"
@@ -909,20 +1088,20 @@ export default function App() {
                       onChange={(e) => setSellForm({ ...sellForm, unit: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm bg-white"
                     >
-                      <option value="kg">kg</option>
-                      <option value="quintal">quintal</option>
-                      <option value="crate">crate</option>
-                      <option value="bundle">bundle</option>
+                      <option value="kg">Kilogram (kg)</option>
+                      <option value="quintal">Quintal</option>
+                      <option value="crate">Crate</option>
+                      <option value="bundle">Bundle</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Wholesale Price (रु/Unit) *
+                      Wholesale Price (रु / Unit) *
                     </label>
                     <input
                       type="number"
                       required
-                      placeholder="e.g. 25"
+                      placeholder="e.g. 55"
                       value={sellForm.expected_price_per_unit}
                       onChange={(e) =>
                         setSellForm({ ...sellForm, expected_price_per_unit: e.target.value })
@@ -935,12 +1114,12 @@ export default function App() {
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Farmer Phone *
+                      Farmer Contact Phone *
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="9868289311"
+                      placeholder="e.g. 9841234567"
                       value={sellForm.contact_phone}
                       onChange={(e) =>
                         setSellForm({ ...sellForm, contact_phone: e.target.value })
@@ -950,12 +1129,12 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Pickup Farm Location *
+                      Exact Farm / Pickup Location *
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="Dhangadhi / Kavre"
+                      placeholder="e.g. Dhangadhi, Kailali or Panchkhal"
                       value={sellForm.pickup_location}
                       onChange={(e) =>
                         setSellForm({ ...sellForm, pickup_location: e.target.value })
@@ -967,12 +1146,12 @@ export default function App() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Description & Harvest Date *
+                    Vegetable Description & Harvest Date *
                   </label>
                   <textarea
-                    rows={3}
+                    rows={4}
                     required
-                    placeholder="Describe freshness, pesticide-free details, and harvest date..."
+                    placeholder="Describe your vegetables, harvest time, freshness, and when our collection van can pick it up..."
                     value={sellForm.vegetable_description}
                     onChange={(e) =>
                       setSellForm({ ...sellForm, vegetable_description: e.target.value })
@@ -998,15 +1177,19 @@ export default function App() {
                     className="w-full text-xs text-slate-600"
                   />
                   {sellImagePreview && (
-                    <div className="relative w-32 h-24 rounded-xl overflow-hidden border border-slate-200">
-                      <img src={sellImagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    <div className="relative w-36 h-28 rounded-2xl overflow-hidden border border-slate-200">
+                      <img
+                        src={sellImagePreview}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
                       <button
                         type="button"
                         onClick={() => {
                           setSellImagePreview(null);
                           setSellForm({ ...sellForm, image: null });
                         }}
-                        className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white"
+                        className="absolute top-1.5 right-1.5 p-1 rounded-full bg-black/60 text-white cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1016,26 +1199,40 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 bg-[#14532D] hover:bg-[#1B4332] text-white font-bold rounded-xl shadow-md cursor-pointer"
+                  className="w-full py-3.5 bg-[#14532D] hover:bg-[#1B4332] text-white font-bold rounded-xl shadow-md transition cursor-pointer"
                 >
                   Submit Wholesale Harvest to Admin
                 </button>
               </form>
 
-              {/* Farmer's Submitted Batches */}
               <div className="lg:col-span-2 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Your Submitted Batches ({mySubmissions.length})
+                <div className="bg-[#14532D] text-white p-5 sm:p-6 rounded-3xl space-y-2">
+                  <h3 className="font-extrabold text-base sm:text-lg">
+                    Need Instant Rate Confirmation?
                   </h3>
-                  <button
-                    onClick={() => setActiveTab("farmer_sales")}
-                    className="text-xs text-emerald-800 font-bold underline"
-                  >
-                    View Sales Ledger →
-                  </button>
+                  <p className="text-xs text-emerald-100">
+                    Chat directly with our KrishiMart Admin team to negotiate bulk rates or
+                    schedule farm pickup.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      onClick={() => setChatDrawerOpen(true)}
+                      className="px-4 py-2 bg-amber-400 text-slate-950 font-bold text-xs rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MessageCircle className="w-4 h-4" /> Live Chat with Admin
+                    </button>
+                    <button
+                      onClick={() => setActiveTab("farmer_sales")}
+                      className="px-4 py-2 bg-white/15 text-white font-bold text-xs rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Receipt className="w-4 h-4" /> View Sold Report
+                    </button>
+                  </div>
                 </div>
 
+                <h3 className="text-lg font-bold text-slate-900">
+                  Your Submitted Harvest Batches ({mySubmissions.length})
+                </h3>
                 {mySubmissions.length === 0 ? (
                   <div className="bg-white rounded-2xl p-6 text-center text-xs text-slate-500 border border-slate-200">
                     No harvest batches submitted yet.
@@ -1048,19 +1245,30 @@ export default function App() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <h4 className="font-bold text-slate-900">{s.vegetable_name}</h4>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                            s.status === "BOUGHT"
-                              ? "bg-emerald-600 text-white"
-                              : s.status === "APPROVED"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : s.status === "REJECTED"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-amber-100 text-amber-800"
-                          }`}
-                        >
-                          {s.status === "BOUGHT" ? "✓ BOUGHT BY ADMIN" : s.status}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              s.status === "BOUGHT"
+                                ? "bg-emerald-600 text-white"
+                                : s.status === "APPROVED"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : s.status === "REJECTED"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {s.status === "BOUGHT" ? "✓ BOUGHT BY ADMIN" : s.status}
+                          </span>
+                          {s.status === "PENDING" && (
+                            <button
+                              onClick={() => handleDeleteSubmission(s.id, s.vegetable_name)}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
+                              title="Withdraw Pending Offer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs text-slate-600">{s.vegetable_description}</p>
                       <p className="text-xs font-bold text-[#14532D]">
@@ -1069,7 +1277,7 @@ export default function App() {
                       </p>
                       {s.admin_remarks && (
                         <div className="p-2.5 rounded-xl bg-emerald-50 text-xs text-emerald-900 border border-emerald-100">
-                          <strong>Admin Note:</strong> {s.admin_remarks}
+                          <strong>Admin Response:</strong> {s.admin_remarks}
                         </div>
                       )}
                     </div>
@@ -1080,14 +1288,33 @@ export default function App() {
           </div>
         )}
 
-        {/* ORDERS VIEW */}
+        {/* DEDICATED "MY ORDERS" TRACKING VIEW */}
         {activeTab === "orders" && user && (
           <div className="max-w-5xl mx-auto px-4 sm:px-8 py-6 sm:py-10 space-y-6">
-            <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">My Orders</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                  Order History & Live Status
+                </span>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                  My Harvest Orders
+                </h2>
+              </div>
+              <button
+                onClick={() => setActiveTab("marketplace")}
+                className="px-4 py-2 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+              >
+                + Continue Shopping
+              </button>
+            </div>
+
             {myOrders.length === 0 ? (
-              <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-2">
+              <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
                 <PackageCheck className="w-10 h-10 text-slate-400 mx-auto" />
                 <p className="text-sm font-bold text-slate-700">No orders placed yet</p>
+                <p className="text-xs text-slate-500">
+                  Add fresh vegetables or fruits to your basket to place your first order.
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1096,19 +1323,48 @@ export default function App() {
                     key={o.id}
                     className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4"
                   >
-                    <div>
-                      <span className="text-xs font-extrabold text-slate-400">#{o.id}</span>
-                      <h3 className="font-bold text-slate-900">{o.product_name}</h3>
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-extrabold text-slate-400">#{o.id}</span>
+                        <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                          {o.product_name}
+                        </h3>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                            o.status === "DELIVERED"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : o.status === "CONFIRMED"
+                              ? "bg-blue-100 text-blue-800"
+                              : o.status === "CANCELLED"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {o.status}
+                        </span>
+                      </div>
                       <p className="text-xs text-slate-500">
-                        Qty: {o.quantity} {o.product_unit} • {o.delivery_address}
+                        Qty:{" "}
+                        <strong>
+                          {o.quantity} {o.product_unit}
+                        </strong>{" "}
+                        • Address: <strong>{o.delivery_address}</strong> • Phone:{" "}
+                        <strong>{o.contact_phone}</strong>
                       </p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-base font-black text-[#14532D]">रु {o.total_price}</span>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className="text-base sm:text-lg font-black text-[#14532D]">
+                          रु {o.total_price}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          {new Date(o.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
                       {o.status === "PENDING" && (
                         <button
                           onClick={() => handleCancelOrder(o.id)}
-                          className="px-3 py-1.5 rounded-xl bg-red-50 text-red-700 text-xs font-bold cursor-pointer"
+                          className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer"
                         >
                           Cancel
                         </button>
@@ -1121,9 +1377,78 @@ export default function App() {
           </div>
         )}
 
-        {/* MAIN DARAZ-STYLE HOMEPAGE & MARKETPLACE */}
+        {/* DEDICATED CHAT VIEW */}
+        {activeTab === "chat" && user && (
+          <div className="max-w-3xl mx-auto px-3 sm:px-4 py-6 sm:py-10">
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[500px] sm:h-[540px] min-h-0">
+              <div className="p-4 sm:p-5 bg-[#14532D] text-white shrink-0">
+                <h3 className="font-bold text-base sm:text-lg">
+                  Direct Support Chat with KrishiMart Admin
+                </h3>
+                <p className="text-xs text-emerald-200">
+                  Connected as {user.full_name} ({user.role})
+                </p>
+              </div>
+              <div
+                ref={chatTabScrollRef}
+                className="flex-1 min-h-0 p-4 sm:p-5 overflow-y-auto space-y-3 bg-[#F6F8F5]"
+              >
+                {messages.length === 0 ? (
+                  <div className="text-center text-slate-400 text-xs sm:text-sm mt-16">
+                    Send a message below to chat with the Admin about buying or selling products!
+                  </div>
+                ) : (
+                  messages.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`flex ${m.is_from_admin ? "justify-start" : "justify-end"}`}
+                    >
+                      <div
+                        className={`max-w-[80%] sm:max-w-md px-4 py-2.5 rounded-2xl text-xs sm:text-sm ${
+                          m.is_from_admin
+                            ? "bg-white border border-slate-200 text-slate-900 rounded-bl-none"
+                            : "bg-[#14532D] text-white rounded-br-none"
+                        }`}
+                      >
+                        <p className="break-words">{m.message}</p>
+                        <span className="block text-[10px] opacity-70 mt-1">
+                          {m.is_from_admin ? "KrishiMart Admin" : "You"} •{" "}
+                          {new Date(m.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form
+                onSubmit={handleSendUserMessage}
+                className="p-3 sm:p-4 border-t border-slate-200 bg-white flex gap-2 shrink-0"
+              >
+                <input
+                  type="text"
+                  placeholder="Write a message to Admin..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 sm:px-5 py-2.5 bg-[#14532D] text-white font-semibold rounded-xl text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Send className="w-4 h-4" /> Send
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MAIN DARAZ-STYLE HOMEPAGE, MARKETPLACE & STORIES */}
         {(activeTab === "home" || activeTab === "marketplace" || activeTab === "stories") && (
           <>
+            {/* 4. FULL HERO SECTION (SHOWN ON HOME) */}
             {activeTab === "home" && (
               <section className="relative bg-gradient-to-b from-[#EBF3EC] to-[#F6F8F5] pt-6 sm:pt-8 pb-10 sm:pb-12 px-4 sm:px-8">
                 <div className="max-w-7xl mx-auto grid lg:grid-cols-12 gap-8 sm:gap-10 items-center">
@@ -1131,25 +1456,29 @@ export default function App() {
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-900/10 text-[#14532D] text-[11px] sm:text-xs font-bold">
                       🌱 Empowering 12,000+ Local Farmers Across Nepal
                     </span>
+
                     <h1 className="text-3xl sm:text-5xl lg:text-[54px] font-black tracking-tight leading-[1.12] text-slate-900">
                       Fresh From the Farm.
                       <span className="block text-[#14532D] mt-1">Straight to You.</span>
                     </h1>
+
                     <p className="text-slate-600 text-sm sm:text-lg max-w-xl leading-relaxed">
-                      Discover crisp mountain produce, connect directly with verified growers, and
-                      enjoy farm-to-table delivery across Nepal.
+                      Discover crisp mountain produce, connect directly with verified growers
+                      across all 7 provinces, and bridge the distance between fertile Himalayan
+                      soil and your dining table.
                     </p>
+
                     <div className="flex flex-wrap items-center gap-3 pt-1">
                       <a
                         href="#fresh-harvests"
-                        className="px-6 py-3.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md"
+                        className="flex-1 sm:flex-initial justify-center px-5 py-3.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md transition"
                       >
                         Explore Store Products <ArrowRight className="w-4 h-4" />
                       </a>
                       {isFarmer ? (
                         <button
                           onClick={() => setActiveTab("sell")}
-                          className="px-6 py-3.5 rounded-xl bg-[#FDE68A] hover:bg-[#FCD34D] text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-xs cursor-pointer"
+                          className="flex-1 sm:flex-initial justify-center px-5 py-3.5 rounded-xl bg-[#FDE68A] hover:bg-[#FCD34D] text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-xs transition cursor-pointer"
                         >
                           🌾 Sell Your Harvest
                         </button>
@@ -1159,167 +1488,932 @@ export default function App() {
                             setAuthModalTab("register");
                             setAuthModalOpen(true);
                           }}
-                          className="px-6 py-3.5 rounded-xl bg-[#FDE68A] hover:bg-[#FCD34D] text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-xs cursor-pointer"
+                          className="flex-1 sm:flex-initial justify-center px-5 py-3.5 rounded-xl bg-[#FDE68A] hover:bg-[#FCD34D] text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-xs transition cursor-pointer"
                         >
-                          🌾 Register as Farmer to Sell
+                          🌾 Sell Your Harvest
                         </button>
                       ) : null}
                     </div>
+
+                    {/* 3 Stat Cards */}
+                    <div className="grid grid-cols-3 gap-2 sm:gap-3 max-w-lg pt-2">
+                      <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
+                        <p className="text-base sm:text-xl font-black text-slate-900">100%</p>
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                          Verified Growers
+                        </p>
+                      </div>
+                      <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
+                        <p className="text-base sm:text-xl font-black text-slate-900">0% Cut</p>
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                          Direct Farm Price
+                        </p>
+                      </div>
+                      <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
+                        <p className="text-base sm:text-xl font-black text-slate-900">24 Hr</p>
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                          Valley Delivery
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="lg:col-span-5">
-                    <img
-                      src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=900&q=80"
-                      alt="Nepali Farm"
-                      className="w-full h-64 sm:h-[360px] object-cover rounded-3xl shadow-xl"
-                    />
+
+                  {/* Right Farmer Photo Card */}
+                  <div className="lg:col-span-5 relative">
+                    <div className="hidden sm:flex items-center gap-2.5 bg-white px-4 py-2.5 rounded-2xl shadow-lg border border-slate-100 absolute -top-4 right-4 z-10">
+                      <div className="w-7 h-7 rounded-full bg-emerald-700 text-white flex items-center justify-center text-xs font-bold">
+                        ✓
+                      </div>
+                      <div className="text-xs leading-tight">
+                        <p className="font-bold text-slate-800">Ram Thapa</p>
+                        <p className="text-[10px] text-slate-500">
+                          Listed 50kg Organic Cauliflower
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-white relative">
+                      <img
+                        src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=900&q=80"
+                        alt="Nepali Terraced Farm"
+                        className="w-full h-64 sm:h-[380px] object-cover"
+                      />
+                      <div className="absolute bottom-3 left-3 right-3 bg-white/95 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-100 text-[#14532D] flex items-center justify-center font-bold shrink-0">
+                            <ShieldCheck className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-extrabold text-slate-900">
+                              100% Nepal Origin Verified
+                            </p>
+                            <p className="text-[10px] sm:text-[11px] text-slate-500">
+                              Traceable to village & cooperative
+                            </p>
+                          </div>
+                        </div>
+                        <span className="px-2 py-1 rounded-lg bg-[#14532D] text-white text-[10px] font-bold">
+                          Guaranteed
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. FLOATING MULTI-FILTER SEARCH BAR & TRENDING PILLS */}
+                <div className="max-w-7xl mx-auto mt-8 sm:mt-10 bg-white rounded-3xl p-4 sm:p-5 shadow-md border border-slate-200/80 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-2.5 sm:gap-3">
+                    <div className="sm:col-span-2 md:col-span-5 relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <input
+                        type="text"
+                        placeholder="Search 'Fresh Tomatoes', 'Mustang Apples', 'Jumla Beans'..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs outline-none focus:bg-white focus:border-[#14532D]"
+                      />
+                    </div>
+                    <div className="md:col-span-3">
+                      <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700"
+                      >
+                        <option value="ALL">🌱 All Produce Categories</option>
+                        <option value="VEGETABLES">Fresh Vegetables</option>
+                        <option value="FRUITS">Hill & Mountain Fruits</option>
+                        <option value="GRAINS">Grains & Cereals</option>
+                        <option value="SPICES">Spices & Aromatics</option>
+                        <option value="DAIRY">Dairy & Oils</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <select
+                        value={selectedDistrict}
+                        onChange={(e) => setSelectedDistrict(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700"
+                      >
+                        <option value="ALL">📍 All Districts</option>
+                        <option value="Kavre">Kavre</option>
+                        <option value="Mustang">Mustang</option>
+                        <option value="Palpa">Palpa</option>
+                        <option value="Jumla">Jumla</option>
+                        <option value="Ilam">Ilam</option>
+                        <option value="Chitwan">Chitwan</option>
+                        <option value="Dhangadhi">Dhangadhi / Kailali</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2 md:col-span-2">
+                      <a
+                        href="#fresh-harvests"
+                        className="w-full h-full py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5"
+                      >
+                        Find Harvest
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Trending Pills */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+                    <span className="text-slate-400 font-semibold">Trending:</span>
+                    {[
+                      { label: "🍅 Organic Tomatoes", term: "Tomato" },
+                      { label: "🍎 Mustang Marpha Apples", term: "Apple" },
+                      { label: "🥔 Palpa Red Potatoes", term: "Potato" },
+                      { label: "🌾 Jumla Marsi Rice", term: "Marsi" },
+                      { label: "🌶️ Ilam Akabare Chili", term: "Chili" },
+                    ].map((t) => (
+                      <button
+                        key={t.term}
+                        onClick={() => setSearchQuery(t.term)}
+                        className="px-3 py-1 rounded-full bg-slate-100 hover:bg-emerald-50 text-slate-700 text-[11px] font-medium transition cursor-pointer"
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                    {(searchQuery ||
+                      selectedCategory !== "ALL" ||
+                      selectedDistrict !== "ALL") && (
+                      <button
+                        onClick={() => {
+                          setSearchQuery("");
+                          setSelectedCategory("ALL");
+                          setSelectedDistrict("ALL");
+                        }}
+                        className="text-xs text-red-600 font-bold ml-2 cursor-pointer"
+                      >
+                        Reset Filters ✕
+                      </button>
+                    )}
                   </div>
                 </div>
               </section>
             )}
 
-            {/* Categories */}
-            <section className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-5">
-              <h2 className="text-xl sm:text-3xl font-black text-slate-900">Explore by Category</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-5">
-                {CATEGORIES_SHOWCASE.map((cat, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      setSelectedCategory(cat.id);
-                      document
-                        .getElementById("fresh-harvests")
-                        ?.scrollIntoView({ behavior: "smooth" });
-                    }}
-                    className="group bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200 shadow-2xs hover:shadow-md transition cursor-pointer"
+            {/* 6. EXPLORE BY CATEGORY */}
+            {activeTab !== "stories" && (
+              <section className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-5">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-700">
+                      OUR HARVEST RANGE
+                    </span>
+                    <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-0.5">
+                      Explore by Category
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setSelectedCategory("ALL")}
+                    className="text-xs font-bold text-[#14532D] hover:underline cursor-pointer"
                   >
-                    <div className="relative rounded-xl overflow-hidden h-28 sm:h-36 mb-2">
-                      <img
-                        src={cat.image}
-                        alt={cat.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                      />
-                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-white text-slate-800 text-[10px] font-bold">
-                        {cat.badge}
+                    View All →
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-5">
+                  {CATEGORIES_SHOWCASE.map((cat, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setSelectedCategory(cat.id);
+                        document
+                          .getElementById("fresh-harvests")
+                          ?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="group bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200/80 shadow-2xs hover:shadow-md transition cursor-pointer"
+                    >
+                      <div className="relative rounded-xl overflow-hidden h-28 sm:h-36 mb-2.5">
+                        <img
+                          src={cat.image}
+                          alt={cat.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                        />
+                        <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-white/95 text-slate-800 text-[9px] sm:text-[10px] font-bold shadow-xs">
+                          {cat.badge}
+                        </span>
+                      </div>
+                      <h3 className="font-bold text-xs sm:text-sm text-slate-900 group-hover:text-[#14532D]">
+                        {cat.title}
+                      </h3>
+                      <p className="text-[10px] sm:text-[11px] text-slate-500 line-clamp-1">
+                        {cat.subtitle}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* 7. FRESH DAILY HARVESTS */}
+            {activeTab !== "stories" && (
+              <section
+                id="fresh-harvests"
+                className="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-6"
+              >
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[11px] font-bold">
+                      ● Live Farm Marketplace ({filteredProducts.length} Batches)
+                    </span>
+                    <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-1">
+                      Fresh Daily Harvests
+                    </h2>
+                  </div>
+
+                  <div className="flex overflow-x-auto max-w-full gap-1.5 bg-white p-1 rounded-xl border border-slate-200">
+                    {[
+                      { id: "ALL", label: "All" },
+                      { id: "VEGETABLES", label: "Vegetables" },
+                      { id: "FRUITS", label: "Fruits" },
+                      { id: "GRAINS", label: "Grains" },
+                      { id: "SPICES", label: "Spices" },
+                      { id: "DAIRY", label: "Dairy" },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setSelectedCategory(tab.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                          selectedCategory === tab.id
+                            ? "bg-[#14532D] text-white"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {filteredProducts.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
+                    <p className="text-sm font-bold text-slate-700">
+                      No harvest batches match your current filter.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setSelectedCategory("ALL");
+                        setSelectedDistrict("ALL");
+                        setSearchQuery("");
+                      }}
+                      className="px-4 py-2 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+                    >
+                      Show All Harvests
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+                    {filteredProducts.map((p) => {
+                      const imgUrl = getProductImage(p);
+                      return (
+                        <div
+                          key={p.id}
+                          className="bg-white rounded-3xl p-3.5 border border-slate-200/90 shadow-xs hover:shadow-lg transition flex flex-col justify-between"
+                        >
+                          <div>
+                            <div
+                              onClick={() => {
+                                setQuickViewProduct(p);
+                                setQuickViewQty(1);
+                              }}
+                              className="relative h-48 sm:h-52 rounded-2xl overflow-hidden mb-3.5 cursor-pointer group"
+                            >
+                              <img
+                                src={imgUrl}
+                                alt={p.name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                              />
+                              <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-white/95 text-slate-800 text-[11px] font-bold flex items-center gap-1 shadow-xs">
+                                <MapPin className="w-3 h-3 text-emerald-700" />
+                                {p.origin_location || "Nepal Farm"}
+                              </span>
+                              <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-emerald-700 text-white text-[10px] font-bold shadow-xs">
+                                {Number(p.stock_quantity) > 0
+                                  ? `${p.stock_quantity} ${p.unit} Left`
+                                  : "Out of Stock"}
+                              </span>
+                            </div>
+
+                            <div className="px-1.5 space-y-1.5">
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span className="flex items-center gap-1 font-medium text-emerald-800">
+                                  <User className="w-3.5 h-3.5" /> Verified Grower
+                                </span>
+                                <span className="uppercase font-bold text-[10px] text-slate-400">
+                                  {p.category}
+                                </span>
+                              </div>
+
+                              <h3
+                                onClick={() => {
+                                  setQuickViewProduct(p);
+                                  setQuickViewQty(1);
+                                }}
+                                className="font-extrabold text-base text-slate-900 hover:text-[#14532D] cursor-pointer"
+                              >
+                                {p.name}
+                              </h3>
+                              <p className="text-xs text-slate-500 line-clamp-2">
+                                {p.description}
+                              </p>
+
+                              <div className="pt-2 flex items-center justify-between">
+                                <div>
+                                  <span className="text-xl font-black text-slate-900">
+                                    रु {p.price}
+                                  </span>
+                                  <span className="text-xs text-slate-500"> / {p.unit}</span>
+                                </div>
+                                <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                  Direct Farm Rate
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                            <button
+                              disabled={Number(p.stock_quantity) <= 0}
+                              onClick={() => handleAddToBasket(p, 1)}
+                              className="flex-1 py-2.5 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                              {Number(p.stock_quantity) > 0 ? "Add to Basket" : "Sold Out"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setQuickViewProduct(p);
+                                setQuickViewQty(1);
+                              }}
+                              className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
+                              title="Quick View Details"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => requireAuth(() => setChatDrawerOpen(true))}
+                              className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
+                              title="Ask Admin about this batch"
+                            >
+                              <MessageCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* 8. TRANSPARENT FROM SOIL TO KITCHEN SECTION */}
+            {activeTab === "home" && (
+              <section className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-8">
+                <div className="text-center max-w-2xl mx-auto space-y-1.5">
+                  <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-700">
+                    HOW KRISHIMART EMPOWERS NEPAL
+                  </span>
+                  <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
+                    Transparent From Soil to Kitchen
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-500">
+                    Whether you are an urban household, a restaurant, or a smallholder farmer in
+                    the hills.
+                  </p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-2xs space-y-5">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-extrabold text-slate-900">
+                        🛒 For Buyers & Families
+                      </h3>
+                      <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+                        Guaranteed Quality
                       </span>
                     </div>
-                    <h3 className="font-bold text-xs sm:text-sm text-slate-900 group-hover:text-[#14532D]">
-                      {cat.title}
-                    </h3>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* Fresh Daily Harvests */}
-            <section
-              id="fresh-harvests"
-              className="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-6"
-            >
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[11px] font-bold">
-                    ● Live Farm Marketplace ({filteredProducts.length} Items)
-                  </span>
-                  <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-1">
-                    Fresh Daily Harvests
-                  </h2>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-                {filteredProducts.map((p) => {
-                  const imgUrl = getProductImage(p);
-                  return (
-                    <div
-                      key={p.id}
-                      className="bg-white rounded-3xl p-3.5 border border-slate-200 shadow-xs hover:shadow-lg transition flex flex-col justify-between"
-                    >
-                      <div>
-                        <div
-                          onClick={() => {
-                            setQuickViewProduct(p);
-                            setQuickViewQty(1);
-                          }}
-                          className="relative h-48 sm:h-52 rounded-2xl overflow-hidden mb-3.5 cursor-pointer group"
-                        >
-                          <img
-                            src={imgUrl}
-                            alt={p.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                          />
-                          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-white text-slate-800 text-[11px] font-bold flex items-center gap-1 shadow-xs">
-                            <MapPin className="w-3 h-3 text-emerald-700" />
-                            {p.origin_location || "Nepal Farm"}
-                          </span>
+                    <div className="space-y-4 text-xs">
+                      <div className="flex gap-3.5">
+                        <span className="w-6 h-6 rounded-lg bg-[#14532D] text-white font-bold flex items-center justify-center shrink-0">
+                          1
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-900 text-sm">
+                            Discover Fresh Harvests by District
+                          </p>
+                          <p className="text-slate-500 mt-0.5">
+                            Browse produce directly from verified cooperatives in Kavre, Palpa,
+                            Chitwan, Kailali, and Mustang.
+                          </p>
                         </div>
-                        <h3 className="font-extrabold text-base text-slate-900">{p.name}</h3>
-                        <p className="text-xs text-slate-500 line-clamp-2 mt-1">{p.description}</p>
-                        <p className="text-xl font-black text-slate-900 mt-2">
-                          रु {p.price} <span className="text-xs text-slate-500 font-normal">/ {p.unit}</span>
-                        </p>
                       </div>
-
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
-                        <button
-                          onClick={() => handleAddToBasket(p, 1)}
-                          className="flex-1 py-2.5 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
-                        >
-                          <ShoppingBag className="w-3.5 h-3.5" /> Buy / Add to Basket
-                        </button>
-                        <button
-                          onClick={() => {
-                            setQuickViewProduct(p);
-                            setQuickViewQty(1);
-                          }}
-                          className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] cursor-pointer"
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                      <div className="flex gap-3.5">
+                        <span className="w-6 h-6 rounded-lg bg-[#14532D] text-white font-bold flex items-center justify-center shrink-0">
+                          2
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-900 text-sm">Zero Middlemen Markup</p>
+                          <p className="text-slate-500 mt-0.5">
+                            Order at transparent farm-gate prices.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+
+                  <div className="bg-[#EEF6F0] rounded-3xl p-6 sm:p-7 border border-emerald-200/80 shadow-2xs space-y-5">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-extrabold text-slate-900">
+                        🌾 For Nepali Farmers
+                      </h3>
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-200 text-[#14532D] text-[10px] font-bold">
+                        0% Fee & Fast Payouts
+                      </span>
+                    </div>
+                    <div className="space-y-4 text-xs">
+                      <div className="flex gap-3.5">
+                        <span className="w-6 h-6 rounded-lg bg-[#14532D] text-white font-bold flex items-center justify-center shrink-0">
+                          1
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-900 text-sm">
+                            Submit Wholesale Harvest Batch
+                          </p>
+                          <p className="text-slate-600 mt-0.5">
+                            Post your vegetables, wholesale price, and pickup location in minutes.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3.5">
+                        <span className="w-6 h-6 rounded-lg bg-[#14532D] text-white font-bold flex items-center justify-center shrink-0">
+                          2
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-900 text-sm">
+                            Direct Admin Procurement & Settlement
+                          </p>
+                          <p className="text-slate-600 mt-0.5">
+                            Track all your sold crops and payouts in your Farmer Sales Report.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* 9. FARMER SPOTLIGHT & REAL BUYER REVIEWS SECTION */}
+            <section className="max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-8">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-700">
+                    COMMUNITY VOICES
+                  </span>
+                  <h2 className="text-xl sm:text-3xl font-black text-slate-900">
+                    Farmer Stories & Buyer Reviews
+                  </h2>
+                </div>
+                <button
+                  onClick={() => requireAuth(() => setStoryModalOpen(true))}
+                  className="px-5 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold shadow-sm cursor-pointer"
+                >
+                  + Share Your Story or Review
+                </button>
               </div>
+
+              {/* Farmer Stories Grid */}
+              <div className="grid md:grid-cols-2 gap-5 sm:gap-6">
+                {approvedFarmerStories.map((st) => (
+                  <div
+                    key={st.id}
+                    className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 space-y-3"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-800 text-white flex items-center justify-center font-bold overflow-hidden shrink-0">
+                        {st.author_avatar ? (
+                          <img
+                            src={
+                              st.author_avatar.startsWith("http")
+                                ? st.author_avatar
+                                : `${BACKEND_URL}${st.author_avatar}`
+                            }
+                            alt={st.author_name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span>{st.author_name?.charAt(0).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-[#14532D] text-[10px] font-bold">
+                          ✓ Verified Farmer Story
+                        </span>
+                        <h4 className="font-extrabold text-slate-900 text-base mt-0.5">
+                          {st.author_name}
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          📍 {st.author_location || "Nepal"}
+                        </p>
+                      </div>
+                    </div>
+                    {st.title && (
+                      <h5 className="font-bold text-sm text-slate-900">"{st.title}"</h5>
+                    )}
+                    <p className="text-xs text-slate-600 italic bg-slate-50 p-4 rounded-2xl leading-relaxed">
+                      "{st.content}"
+                    </p>
+                  </div>
+                ))}
+
+                {/* Default Spotlight Cards if no custom farmer stories yet */}
+                {approvedFarmerStories.length === 0 && (
+                  <>
+                    <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 space-y-4">
+                      <div className="flex items-center gap-4">
+                        <img
+                          src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80"
+                          alt="Ram Bahadur Karki"
+                          className="w-14 h-14 rounded-2xl object-cover"
+                        />
+                        <div>
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-[#14532D] text-[10px] font-bold">
+                            ✓ Cooperative Leader
+                          </span>
+                          <h4 className="font-extrabold text-slate-900 text-base mt-0.5">
+                            Ram Bahadur Karki
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            📍 Dhading Besi, Bagmati Province
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-600 italic bg-slate-50 p-4 rounded-2xl leading-relaxed">
+                        "With KrishiMart, my cooperative gets 35% higher returns directly with
+                        digital weighing and instant chat support."
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 space-y-4">
+                      <div className="flex items-center gap-4">
+                        <img
+                          src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"
+                          alt="Sita Devi Adhikari"
+                          className="w-14 h-14 rounded-2xl object-cover"
+                        />
+                        <div>
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-bold">
+                            ★ Organic Pioneer
+                          </span>
+                          <h4 className="font-extrabold text-slate-900 text-base mt-0.5">
+                            Sita Devi Adhikari
+                          </h4>
+                          <p className="text-xs text-slate-500">📍 Bharatpur-14, Chitwan</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-600 italic bg-slate-50 p-4 rounded-2xl leading-relaxed">
+                        "KrishiMart connected our women's group directly to families who value
+                        authentic pesticide-free vegetables."
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Approved Buyer Reviews Grid */}
+              {approvedBuyerReviews.length > 0 && (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4">
+                  {approvedBuyerReviews.map((br) => (
+                    <div
+                      key={br.id}
+                      className="bg-white rounded-3xl p-5 border border-slate-200 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden">
+                            {br.author_avatar ? (
+                              <img
+                                src={
+                                  br.author_avatar.startsWith("http")
+                                    ? br.author_avatar
+                                    : `${BACKEND_URL}${br.author_avatar}`
+                                }
+                                alt={br.author_name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span>{br.author_name?.charAt(0).toUpperCase()}</span>
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-bold text-xs text-slate-900">{br.author_name}</p>
+                            <p className="text-[10px] text-slate-400">Verified Buyer</p>
+                          </div>
+                        </div>
+                        <div className="flex text-amber-400">
+                          {Array.from({ length: br.rating || 5 }).map((_, i) => (
+                            <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
+                          ))}
+                        </div>
+                      </div>
+                      {br.title && (
+                        <p className="font-bold text-xs text-slate-800">"{br.title}"</p>
+                      )}
+                      <p className="text-xs text-slate-600 italic">"{br.content}"</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </>
         )}
       </main>
 
-      {/* AUTH POPUP MODAL FOR VISITORS */}
-      {authModalOpen && (
+      {/* SHARE STORY / WRITE REVIEW MODAL */}
+      {storyModalOpen && user && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <AuthView
-            initialTab={authModalTab}
-            onAuthSuccess={(u) => {
-              setUser(u);
-              setAuthModalOpen(false);
-              showToast(`Welcome, ${u.full_name}!`);
-            }}
-            onCancel={() => setAuthModalOpen(false)}
-          />
-        </div>
-      )}
-
-      {/* USER PROFILE MODAL */}
-      {profileModalOpen && user && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-extrabold text-slate-900">Your Profile & Photo</h3>
+          <form
+            onSubmit={handleStorySubmit}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+              <h3 className="text-lg font-extrabold text-slate-900">
+                {user.role === "FARMER" ? "Share Your Farmer Story" : "Write a Buyer Review"}
+              </h3>
               <button
-                onClick={() => setProfileModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                type="button"
+                onClick={() => setStoryModalOpen(false)}
+                className="p-1 text-slate-400"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+            <input
+              type="text"
+              placeholder="Headline (e.g. Fresh Harvest Experience)"
+              value={storyForm.title}
+              onChange={(e) => setStoryForm({ ...storyForm, title: e.target.value })}
+              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm"
+            />
+            <textarea
+              rows={4}
+              required
+              placeholder="Share your experience with KrishiMart..."
+              value={storyForm.content}
+              onChange={(e) => setStoryForm({ ...storyForm, content: e.target.value })}
+              className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm"
+            />
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Rating</label>
+              <select
+                value={storyForm.rating}
+                onChange={(e) => setStoryForm({ ...storyForm, rating: Number(e.target.value) })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white"
+              >
+                <option value={5}>⭐⭐⭐⭐⭐ (5 Stars)</option>
+                <option value={4}>⭐⭐⭐⭐ (4 Stars)</option>
+                <option value={3}>⭐⭐⭐ (3 Stars)</option>
+              </select>
+            </div>
+            <button
+              type="submit"
+              className="w-full py-3 bg-[#14532D] text-white font-bold rounded-xl text-xs cursor-pointer"
+            >
+              Submit for Admin Approval
+            </button>
+          </form>
+        </div>
+      )}
 
+      {/* PRODUCT QUICK-VIEW DETAIL MODAL (WITH QUANTITY SELECTOR) */}
+      {quickViewProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div className="relative h-60">
+              <img
+                src={getProductImage(quickViewProduct)}
+                alt={quickViewProduct.name}
+                className="w-full h-full object-cover"
+              />
+              <button
+                onClick={() => setQuickViewProduct(null)}
+                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white hover:bg-black cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <span className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-white/95 text-slate-900 text-xs font-bold flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-emerald-700" />
+                {quickViewProduct.origin_location || "Nepal Farm"}
+              </span>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-bold uppercase text-emerald-700">
+                    {quickViewProduct.category}
+                  </span>
+                  <h3 className="text-xl font-extrabold text-slate-900">
+                    {quickViewProduct.name}
+                  </h3>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-2xl font-black text-[#14532D]">
+                    रु {quickViewProduct.price}
+                  </span>
+                  <span className="text-xs text-slate-500 block">
+                    per {quickViewProduct.unit}
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-2xl">
+                {quickViewProduct.description}
+              </p>
+              <div className="flex items-center justify-between pt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700">Quantity:</span>
+                  <button
+                    onClick={() => setQuickViewQty(Math.max(1, quickViewQty - 1))}
+                    className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center cursor-pointer"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="w-8 text-center font-extrabold text-sm">{quickViewQty}</span>
+                  <button
+                    onClick={() => setQuickViewQty(quickViewQty + 1)}
+                    className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => {
+                    handleAddToBasket(quickViewProduct, quickViewQty);
+                    setQuickViewProduct(null);
+                  }}
+                  className="px-6 py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                >
+                  <ShoppingBag className="w-4 h-4" /> Add to Basket (रु{" "}
+                  {Number(quickViewProduct.price) * quickViewQty})
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SLIDE-OUT SHOPPING BASKET & CHECKOUT DRAWER (WITH COD / ESEWA / KHALTI) */}
+      {basketDrawerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end">
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col justify-between p-5 sm:p-6 overflow-y-auto">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="w-5 h-5 text-[#14532D]" />
+                  <h3 className="text-lg font-extrabold text-slate-900">
+                    Your Harvest Basket ({totalBasketItems})
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setBasketDrawerOpen(false)}
+                  className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {basket.length === 0 ? (
+                <div className="py-16 text-center space-y-2 text-slate-400">
+                  <ShoppingBag className="w-10 h-10 mx-auto opacity-40" />
+                  <p className="text-sm font-semibold">Your basket is empty</p>
+                  <p className="text-xs">Tap "Add to Basket" on any harvest item to start.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {basket.map((item) => (
+                    <div key={item.id} className="py-3.5 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-sm text-slate-900">{item.name}</p>
+                        <p className="text-xs text-slate-500">
+                          रु {item.price} / {item.unit}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleUpdateBasketQty(item.id, -1)}
+                          className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-xs font-extrabold w-6 text-center">{item.qty}</span>
+                        <button
+                          onClick={() => handleUpdateBasketQty(item.id, 1)}
+                          className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {basket.length > 0 && (
+              <form
+                onSubmit={handleCheckoutBasket}
+                className="border-t border-slate-200 pt-4 space-y-3"
+              >
+                <div className="flex items-center justify-between text-base font-black text-slate-900">
+                  <span>Total Amount:</span>
+                  <span className="text-[#14532D]">रु {basketTotal}</span>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Contact Phone Number *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 9841234567"
+                    value={checkoutPhone}
+                    onChange={(e) => setCheckoutPhone(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Delivery Address / Location *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Ward 4, Dhangadhi or Kathmandu"
+                    value={checkoutAddress}
+                    onChange={(e) => setCheckoutAddress(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Payment Method *
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "COD", label: "💵 Cash on Delivery" },
+                      { id: "ESEWA", label: "🟢 eSewa Wallet" },
+                      { id: "KHALTI", label: "🟣 Khalti Wallet" },
+                    ].map((pm) => (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(pm.id)}
+                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
+                          paymentMethod === pm.id
+                            ? "border-[#14532D] bg-emerald-50 text-[#14532D]"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {pm.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={checkingOut}
+                  className="w-full py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs shadow-md transition cursor-pointer"
+                >
+                  {checkingOut ? "Placing Order..." : `Confirm Order (रु ${basketTotal})`}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* EDIT USER PROFILE, PHOTO & CHANGE PASSWORD MODAL */}
+      {profileModalOpen && user && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleUpdateProfile} className="space-y-3.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-extrabold text-slate-900">Your Profile & Photo</h3>
+                <button
+                  type="button"
+                  onClick={() => setProfileModalOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
               <div className="flex items-center gap-4 py-2 border-b border-slate-100">
                 <div className="relative w-16 h-16 rounded-full bg-slate-100 border-2 border-emerald-600/30 overflow-hidden flex items-center justify-center shrink-0">
                   {profileAvatarPreview ? (
-                    <img src={profileAvatarPreview} alt="Preview" className="w-full h-full object-cover" />
+                    <img
+                      src={profileAvatarPreview}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
                   ) : user.profile_picture ? (
                     <img
                       src={
@@ -1339,7 +2433,7 @@ export default function App() {
                     htmlFor="edit-profile-avatar"
                     className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Camera className="w-3.5 h-3.5 text-emerald-700" /> Change Photo
+                    <Camera className="w-3.5 h-3.5 text-emerald-700" /> Change Profile Photo
                   </label>
                   <input
                     id="edit-profile-avatar"
@@ -1354,12 +2448,12 @@ export default function App() {
                     }}
                     className="hidden"
                   />
-                  <span className="text-[10px] text-slate-400 block mt-0.5">JPG/PNG</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">JPG or PNG</span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
                 <input
                   type="text"
                   required
@@ -1368,19 +2462,21 @@ export default function App() {
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
                 <input
                   type="text"
                   value={profileForm.phone_number}
-                  onChange={(e) => setProfileForm({ ...profileForm, phone_number: e.target.value })}
+                  onChange={(e) =>
+                    setProfileForm({ ...profileForm, phone_number: e.target.value })
+                  }
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
-
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Delivery / Farm Location</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Default Location / Address
+                </label>
                 <input
                   type="text"
                   value={profileForm.location}
@@ -1388,39 +2484,44 @@ export default function App() {
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
-
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
               >
-                Save Profile Changes & Photo
+                Save Profile & Photo
               </button>
             </form>
 
-            <form onSubmit={handleChangePassword} className="pt-3 border-t border-slate-200 space-y-2.5">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Change Password</h4>
+            {/* Restored Change Password Section */}
+            <form
+              onSubmit={handleChangePassword}
+              className="pt-4 border-t border-slate-200 space-y-3"
+            >
+              <h4 className="text-sm font-extrabold text-slate-900">Change Password</h4>
               <input
                 type="password"
                 required
-                placeholder="Current Password"
+                placeholder="Current Password *"
                 value={passwordForm.current_password}
                 onChange={(e) =>
                   setPasswordForm({ ...passwordForm, current_password: e.target.value })
                 }
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
               <input
                 type="password"
                 required
                 minLength={8}
-                placeholder="New Password (min 8 chars)"
+                placeholder="New Password (min 8 chars) *"
                 value={passwordForm.new_password}
-                onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                onChange={(e) =>
+                  setPasswordForm({ ...passwordForm, new_password: e.target.value })
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
               <button
                 type="submit"
-                className="w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
               >
                 Update Password
               </button>
@@ -1429,135 +2530,109 @@ export default function App() {
         </div>
       )}
 
-      {/* QUICK VIEW MODAL */}
-      {quickViewProduct && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl">
-            <div className="relative h-60">
-              <img
-                src={getProductImage(quickViewProduct)}
-                alt={quickViewProduct.name}
-                className="w-full h-full object-cover"
-              />
-              <button
-                onClick={() => setQuickViewProduct(null)}
-                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-6 space-y-3">
-              <h3 className="text-xl font-extrabold text-slate-900">{quickViewProduct.name}</h3>
-              <p className="text-xs sm:text-sm text-slate-600">{quickViewProduct.description}</p>
-              <p className="text-2xl font-black text-[#14532D]">
-                रु {quickViewProduct.price} / {quickViewProduct.unit}
-              </p>
-              <button
-                onClick={() => {
-                  handleAddToBasket(quickViewProduct, quickViewQty);
-                  setQuickViewProduct(null);
-                }}
-                className="w-full py-3 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
-              >
-                Add to Basket
-              </button>
-            </div>
-          </div>
+      {/* AUTH POPUP MODAL FOR VISITORS */}
+      {authModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <AuthView
+            initialTab={authModalTab}
+            onAuthSuccess={(u) => {
+              setUser(u);
+              setAuthModalOpen(false);
+              showToast(`Welcome, ${u.full_name}!`);
+            }}
+            onCancel={() => setAuthModalOpen(false)}
+          />
         </div>
       )}
 
-      {/* BASKET DRAWER */}
-      {basketDrawerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end">
-          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col justify-between p-5 sm:p-6 overflow-y-auto">
+      {/* MOBILE-RESPONSIVE FLOATING LIVE CHAT DRAWER */}
+      {chatDrawerOpen && isVerifiedOrAdmin && (
+        <div className="fixed inset-x-3 bottom-20 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:w-96 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[420px] sm:h-[460px] min-h-0">
+          <div className="p-4 bg-[#14532D] text-white flex items-center justify-between shrink-0">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                <h3 className="text-lg font-extrabold text-slate-900">Your Basket ({totalBasketItems})</h3>
-                <button onClick={() => setBasketDrawerOpen(false)} className="p-1.5 text-slate-500">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="divide-y divide-slate-100 py-3">
-                {basket.map((item) => (
-                  <div key={item.id} className="py-2.5 flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-sm text-slate-900">{item.name}</p>
-                      <p className="text-xs text-slate-500">रु {item.price} / {item.unit}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleUpdateBasketQty(item.id, -1)}
-                        className="w-6 h-6 border rounded flex items-center justify-center"
-                      >
-                        -
-                      </button>
-                      <span className="text-xs font-bold">{item.qty}</span>
-                      <button
-                        onClick={() => handleUpdateBasketQty(item.id, 1)}
-                        className="w-6 h-6 border rounded flex items-center justify-center"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p className="font-bold text-sm">KrishiMart Live Admin Support</p>
+              <p className="text-[11px] text-emerald-200">Buyers & Farmers Direct Chat</p>
             </div>
-
-            {basket.length > 0 && (
-              <form onSubmit={handleCheckoutBasket} className="border-t border-slate-200 pt-3 space-y-2.5">
-                <div className="flex justify-between font-bold text-sm">
-                  <span>Total:</span>
-                  <span className="text-[#14532D]">रु {basketTotal}</span>
-                </div>
-                <input
-                  type="text"
-                  required
-                  placeholder="Delivery Phone *"
-                  value={checkoutPhone}
-                  onChange={(e) => setCheckoutPhone(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Delivery Address *"
-                  value={checkoutAddress}
-                  onChange={(e) => setCheckoutAddress(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
-                <div className="grid grid-cols-3 gap-1.5 text-[11px] font-bold">
-                  {["COD", "ESEWA", "KHALTI"].map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPaymentMethod(m)}
-                      className={`py-1.5 border rounded-lg ${
-                        paymentMethod === m ? "bg-emerald-50 border-[#14532D] text-[#14532D]" : "text-slate-600"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="submit"
-                  disabled={checkingOut}
-                  className="w-full py-3 bg-[#14532D] text-white font-bold rounded-xl text-xs cursor-pointer"
+            <button
+              onClick={() => setChatDrawerOpen(false)}
+              className="p-1 text-emerald-200 hover:text-white cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div
+            ref={chatDrawerScrollRef}
+            className="flex-1 min-h-0 p-4 overflow-y-auto space-y-2.5 bg-[#F6F8F5]"
+          >
+            {messages.length === 0 ? (
+              <p className="text-center text-xs text-slate-400 mt-12">
+                Hello {user.full_name}! Message the Admin about product prices or selling your
+                vegetables.
+              </p>
+            ) : (
+              messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`flex ${m.is_from_admin ? "justify-start" : "justify-end"}`}
                 >
-                  {checkingOut ? "Placing Order..." : `Confirm Order (रु ${basketTotal})`}
-                </button>
-              </form>
+                  <div
+                    className={`max-w-[78%] px-3.5 py-2 rounded-2xl text-xs ${
+                      m.is_from_admin
+                        ? "bg-white border border-slate-200 text-slate-800"
+                        : "bg-[#14532D] text-white"
+                    }`}
+                  >
+                    <p className="break-words">{m.message}</p>
+                    <span className="flex items-center justify-between gap-2 text-[10px] opacity-75 mt-1">
+                          <span>
+                            {m.is_from_admin ? "KrishiMart Admin" : "You"} •{" "}
+                            {new Date(m.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          {!m.is_from_admin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMyMessage(m.id)}
+                              className="hover:text-red-300 cursor-pointer"
+                              title="Unsend message"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </span>
+                  </div>
+                </div>
+              ))
             )}
           </div>
+          <form
+            onSubmit={handleSendUserMessage}
+            className="p-3 border-t border-slate-200 bg-white flex gap-2 shrink-0"
+          >
+            <input
+              type="text"
+              placeholder="Message Admin..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none"
+            />
+            <button
+              type="submit"
+              className="px-3.5 py-2 bg-[#14532D] text-white rounded-xl text-xs font-bold cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
         </div>
       )}
 
-      {/* MOBILE BOTTOM NAVIGATION BAR */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 px-2 py-1.5 flex items-center justify-around shadow-lg">
+      {/* NATIVE-STYLE MOBILE BOTTOM NAVIGATION BAR (VISIBLE ON PHONES < 768px) */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 flex items-center justify-around shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
         <button
           onClick={() => setActiveTab("home")}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === "home" ? "text-[#14532D]" : "text-slate-400"
           }`}
         >
@@ -1567,7 +2642,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("marketplace")}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === "marketplace" ? "text-[#14532D]" : "text-slate-400"
           }`}
         >
@@ -1575,43 +2650,86 @@ export default function App() {
           <span>Shop</span>
         </button>
 
-        {isFarmer && (
-          <button onClick={() => setActiveTab("sell")} className="flex flex-col items-center -mt-5">
+        {isFarmer || !user ? (
+          <button
+            onClick={() => {
+              if (!user) {
+                setAuthModalTab("register");
+                setAuthModalOpen(true);
+              } else {
+                setActiveTab("sell");
+              }
+            }}
+            className="flex flex-col items-center -mt-5 cursor-pointer"
+          >
             <div className="w-11 h-11 rounded-full bg-[#14532D] text-amber-400 flex items-center justify-center shadow-md border-4 border-white">
               <Plus className="w-5 h-5" />
             </div>
             <span className="text-[10px] font-extrabold text-[#14532D] mt-0.5">Sell</span>
           </button>
+        ) : (
+          <button
+            onClick={() => setBasketDrawerOpen(true)}
+            className="flex flex-col items-center -mt-5 cursor-pointer"
+          >
+            <div className="w-11 h-11 rounded-full bg-[#14532D] text-amber-400 flex items-center justify-center shadow-md border-4 border-white relative">
+              <ShoppingBag className="w-5 h-5" />
+              {totalBasketItems > 0 && (
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black">
+                  {totalBasketItems}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-extrabold text-[#14532D] mt-0.5">Basket</span>
+          </button>
         )}
 
-        {isFarmer && (
+        {isFarmer ? (
           <button
             onClick={() => setActiveTab("farmer_sales")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
               activeTab === "farmer_sales" ? "text-[#14532D]" : "text-slate-400"
             }`}
           >
             <Receipt className="w-5 h-5" />
             <span>Sales</span>
           </button>
-        )}
-
-        {user && !isFarmer && (
+        ) : user ? (
           <button
             onClick={() => setActiveTab("orders")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
               activeTab === "orders" ? "text-[#14532D]" : "text-slate-400"
             }`}
           >
             <PackageCheck className="w-5 h-5" />
             <span>Orders</span>
           </button>
+        ) : (
+          <button
+            onClick={() => setActiveTab("stories")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
+              activeTab === "stories" ? "text-[#14532D]" : "text-slate-400"
+            }`}
+          >
+            <BookOpen className="w-5 h-5" />
+            <span>Stories</span>
+          </button>
         )}
 
-        {user ? (
+        {user && (user.is_staff || user.role === "ADMIN") ? (
+          <button
+            onClick={() => setActiveTab("admin")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
+              activeTab === "admin" ? "text-amber-600" : "text-slate-400"
+            }`}
+          >
+            <LayoutDashboard className="w-5 h-5" />
+            <span>Admin</span>
+          </button>
+        ) : user ? (
           <button
             onClick={() => setProfileModalOpen(true)}
-            className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-400"
+            className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-400 cursor-pointer"
           >
             <User className="w-5 h-5" />
             <span>Profile</span>
@@ -1622,13 +2740,58 @@ export default function App() {
               setAuthModalTab("login");
               setAuthModalOpen(true);
             }}
-            className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-400"
+            className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-400 cursor-pointer"
           >
             <LogIn className="w-5 h-5" />
             <span>Sign In</span>
           </button>
         )}
       </nav>
+
+      {/* 11. FULL 4-COLUMN FOOTER */}
+      <footer className="bg-white border-t border-slate-200 mt-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-8 text-xs text-slate-600">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-[#14532D] flex items-center justify-center text-amber-400">
+                <Sprout className="w-5 h-5" />
+              </div>
+              <span className="text-lg font-extrabold text-slate-900">KrishiMart</span>
+            </div>
+            <p className="leading-relaxed text-slate-500">
+              Empowering Nepal's agricultural backbone. Connecting local farmers, cooperatives, and
+              households through transparent pricing and Admin-verified trust.
+            </p>
+          </div>
+          <div>
+            <h4 className="font-bold text-slate-900 mb-3">Market Categories</h4>
+            <ul className="space-y-2">
+              <li>Fresh Seasonal Vegetables</li>
+              <li>Indigenous Grains & Jumla Marsi</li>
+              <li>Mustang & Hill Orchard Fruits</li>
+              <li>Organic Spices & Dairy</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-bold text-slate-900 mb-3">Farmer & Buyer Support</h4>
+            <ul className="space-y-2">
+              <li>Farmer Wholesale Selling Portal</li>
+              <li>Track My Harvest Orders</li>
+              <li>Community Stories & Reviews</li>
+              <li>Live Buyer–Seller–Admin Chat</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-bold text-slate-900 mb-3">Central Hub Contact</h4>
+            <ul className="space-y-2">
+              <li>📍 Dhangadhi Hub & Kathmandu Valley</li>
+              <li>📞 +977-1-4423456 / 9840000000</li>
+              <li>✉️ support@krishimart.com.np</li>
+              <li>🕒 6:00 AM – 8:00 PM NPT Daily</li>
+            </ul>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -4,12 +4,19 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from accounts.permissions import IsAdminVerified, IsFarmerOrAdmin, IsSiteAdmin
-from .models import Product, SellProductSubmission, FarmerPurchase, Order
+from .models import (
+    Product,
+    SellProductSubmission,
+    FarmerPurchase,
+    Order,
+    StoryReview,
+)
 from .serializers import (
     ProductSerializer,
     SellProductSubmissionSerializer,
     FarmerPurchaseSerializer,
     OrderSerializer,
+    StoryReviewSerializer,
 )
 
 INITIAL_NEPAL_PRODUCTS = [
@@ -100,23 +107,28 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
     def buy_from_farmer(self, request, pk=None):
-        """
-        Executes the 'Buy from Farmer' action:
-        Records a FarmerPurchase, updates submission status, and optionally adds it to the customer store.
-        """
         submission = self.get_object()
-        
-        purchased_qty = Decimal(str(request.data.get("quantity", submission.quantity)))
-        agreed_rate = Decimal(str(request.data.get("agreed_wholesale_rate", submission.expected_price_per_unit)))
-        total_amount = purchased_qty * agreed_rate
-        
+
+        if submission.status == "BOUGHT":
+            return Response(
+                {"error": "This harvest batch has already been purchased from the farmer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        purchased_qty = Decimal(str(request.data.get("quantity", submission.quantity))).quantize(
+            Decimal("0.01")
+        )
+        agreed_rate = Decimal(
+            str(request.data.get("agreed_wholesale_rate", submission.expected_price_per_unit))
+        ).quantize(Decimal("0.01"))
+        total_amount = (purchased_qty * agreed_rate).quantize(Decimal("0.01"))
+
         payment_method = request.data.get("payment_method", "CASH")
         payment_status = request.data.get("payment_status", "PAID")
         admin_notes = request.data.get("admin_notes", "").strip()
         publish_to_store = bool(request.data.get("publish_to_store", False))
         retail_price = request.data.get("retail_price")
 
-        # 1. Create the official FarmerPurchase transaction record
         purchase = FarmerPurchase.objects.create(
             submission=submission,
             farmer=submission.seller,
@@ -133,12 +145,13 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
             admin_notes=admin_notes,
         )
 
-        # 2. Mark submission as BOUGHT
         submission.status = "BOUGHT"
-        submission.admin_remarks = f"Bought by KrishiMart: {purchased_qty} {submission.unit} @ Rs. {agreed_rate}/{submission.unit} (Total: Rs. {total_amount}). {admin_notes}"
+        submission.admin_remarks = (
+            f"Bought by KrishiMart: {purchased_qty} {submission.unit} @ "
+            f"रु {agreed_rate}/{submission.unit} (Total: रु {total_amount}). {admin_notes}"
+        )
         submission.save()
 
-        # 3. Optionally publish as an inventory product for customers to purchase
         if publish_to_store:
             cat_upper = (submission.category or "").upper()
             if "FRUIT" in cat_upper:
@@ -152,25 +165,33 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
             else:
                 mapped_cat = "VEGETABLES"
 
-            final_retail_price = Decimal(str(retail_price)) if retail_price else agreed_rate
+            final_retail_price = (
+                Decimal(str(retail_price)).quantize(Decimal("0.01"))
+                if retail_price
+                else agreed_rate
+            )
 
             Product.objects.create(
                 name=submission.vegetable_name,
                 category=mapped_cat,
                 description=f"{submission.vegetable_description} (Grown by: {submission.seller.full_name})",
                 price=final_retail_price,
-                unit=submission.unit if submission.unit in ["kg", "g", "bundle", "crate", "quintal"] else "kg",
+                unit=submission.unit
+                if submission.unit in ["kg", "g", "bundle", "crate", "quintal"]
+                else "kg",
                 stock_quantity=purchased_qty,
                 origin_location=submission.pickup_location,
                 image=submission.image,
                 is_available=True,
             )
 
-        return Response({
-            "message": f"Successfully purchased {purchased_qty} {submission.unit} from {submission.seller.full_name}!",
-            "purchase": FarmerPurchaseSerializer(purchase).data,
-            "submission": SellProductSubmissionSerializer(submission).data,
-        })
+        return Response(
+            {
+                "message": f"Successfully purchased {purchased_qty} {submission.unit} from {submission.seller.full_name}!",
+                "purchase": FarmerPurchaseSerializer(purchase).data,
+                "submission": SellProductSubmissionSerializer(submission).data,
+            }
+        )
 
     @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
     def review(self, request, pk=None):
@@ -188,11 +209,6 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
 
 
 class FarmerPurchaseViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Endpoints for procurement history:
-    - Admin views all bought products with total procurement expenditure.
-    - Farmers view their 'Sold to Admin' report with total earnings.
-    """
     serializer_class = FarmerPurchaseSerializer
     permission_classes = [IsAuthenticated]
 
@@ -250,3 +266,35 @@ class OrderViewSet(viewsets.ModelViewSet):
             product = updated_order.product
             product.stock_quantity += updated_order.quantity
             product.save()
+
+
+class StoryReviewViewSet(viewsets.ModelViewSet):
+    serializer_class = StoryReviewSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated and (user.is_staff or user.role == "ADMIN"):
+            return StoryReview.objects.all()
+        return StoryReview.objects.filter(status="APPROVED")
+
+    def get_permissions(self):
+        if self.action in ["list", "retrieve"]:
+            return [AllowAny()]
+        return [IsAdminVerified()]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        stype = serializer.validated_data.get("story_type")
+        if not stype:
+            stype = "FARMER_STORY" if user.role == "FARMER" else "BUYER_REVIEW"
+        serializer.save(author=user, story_type=stype, status="PENDING")
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
+    def toggle_status(self, request, pk=None):
+        story = self.get_object()
+        new_status = request.data.get("status")
+        if new_status not in ["APPROVED", "REJECTED", "PENDING"]:
+            return Response({"error": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+        story.status = new_status
+        story.save()
+        return Response(StoryReviewSerializer(story).data)

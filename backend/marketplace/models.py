@@ -39,9 +39,6 @@ class Product(models.Model):
 
 
 class SellProductSubmission(models.Model):
-    """
-    Farmer submission portal for wholesale harvest offers.
-    """
     STATUS_CHOICES = (
         ("PENDING", "Pending Review"),
         ("BOUGHT", "Purchased by Admin"),
@@ -79,9 +76,6 @@ class SellProductSubmission(models.Model):
 
 
 class FarmerPurchase(models.Model):
-    """
-    Tracks official procurement transactions when Admin buys crops from Farmers.
-    """
     PAYMENT_STATUS_CHOICES = (
         ("PAID", "Payment Settled"),
         ("PENDING", "Pending on Pickup"),
@@ -155,3 +149,34 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Order #{self.id} - {self.product.name} by {self.buyer.full_name}"
+
+
+class StoryReview(models.Model):
+    STORY_TYPE_CHOICES = (
+        ("FARMER_STORY", "Farmer Story"),
+        ("BUYER_REVIEW", "Buyer Review"),
+    )
+    STATUS_CHOICES = (
+        ("PENDING", "Pending Admin Approval"),
+        ("APPROVED", "Approved & Featured"),
+        ("REJECTED", "Declined"),
+    )
+
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="stories_reviews",
+    )
+    story_type = models.CharField(max_length=20, choices=STORY_TYPE_CHOICES)
+    title = models.CharField(max_length=200, blank=True, default="")
+    content = models.TextField()
+    rating = models.IntegerField(default=5)
+    image = models.ImageField(upload_to="stories/", null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.story_type} by {self.author.full_name} ({self.status})"

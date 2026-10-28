@@ -5,6 +5,7 @@ from .views import (
     SellProductSubmissionViewSet,
     FarmerPurchaseViewSet,
     OrderViewSet,
+    StoryReviewViewSet,
 )
 
 router = DefaultRouter()
@@ -12,6 +13,7 @@ router.register(r"products", ProductViewSet, basename="products")
 router.register(r"sell-submissions", SellProductSubmissionViewSet, basename="sell-submissions")
 router.register(r"farmer-purchases", FarmerPurchaseViewSet, basename="farmer-purchases")
 router.register(r"orders", OrderViewSet, basename="orders")
+router.register(r"stories", StoryReviewViewSet, basename="stories")
 
 urlpatterns = [
     path("", include(router.urls)),
