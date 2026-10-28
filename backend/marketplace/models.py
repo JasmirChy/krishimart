@@ -40,12 +40,12 @@ class Product(models.Model):
 
 class SellProductSubmission(models.Model):
     """
-    'Sell Your Products' feature: Farmers or Customers submit their vegetables/produce
-    to sell directly to the business owner / Admin.
+    Farmer submission portal for wholesale harvest offers.
     """
     STATUS_CHOICES = (
         ("PENDING", "Pending Review"),
-        ("APPROVED", "Approved & Purchased"),
+        ("BOUGHT", "Purchased by Admin"),
+        ("APPROVED", "Approved"),
         ("REJECTED", "Declined"),
     )
 
@@ -57,16 +57,13 @@ class SellProductSubmission(models.Model):
     vegetable_name = models.CharField(max_length=150)
     category = models.CharField(max_length=50, default="Fresh Vegetables")
     vegetable_description = models.TextField(
-        help_text="Describe freshness, harvest date, organic status, and quality."
+        help_text="Freshness, harvest date, and quality notes."
     )
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     unit = models.CharField(max_length=20, default="kg")
     expected_price_per_unit = models.DecimalField(max_digits=10, decimal_places=2)
     contact_phone = models.CharField(max_length=20)
-    pickup_location = models.CharField(
-        max_length=255,
-        help_text="Full farm or pickup address/location",
-    )
+    pickup_location = models.CharField(max_length=255)
     image = models.ImageField(upload_to="farmer_submissions/", null=True, blank=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
@@ -79,6 +76,53 @@ class SellProductSubmission(models.Model):
 
     def __str__(self):
         return f"{self.vegetable_name} ({self.quantity} {self.unit}) by {self.seller.full_name}"
+
+
+class FarmerPurchase(models.Model):
+    """
+    Tracks official procurement transactions when Admin buys crops from Farmers.
+    """
+    PAYMENT_STATUS_CHOICES = (
+        ("PAID", "Payment Settled"),
+        ("PENDING", "Pending on Pickup"),
+    )
+
+    PAYMENT_METHOD_CHOICES = (
+        ("CASH", "Cash on Pickup"),
+        ("BANK", "Direct Bank Transfer"),
+        ("ESEWA", "eSewa / Digital Wallet"),
+    )
+
+    submission = models.ForeignKey(
+        SellProductSubmission,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="purchases",
+    )
+    farmer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sales_to_admin",
+    )
+    crop_name = models.CharField(max_length=150)
+    category = models.CharField(max_length=50)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    unit = models.CharField(max_length=20, default="kg")
+    agreed_wholesale_rate = models.DecimalField(max_digits=10, decimal_places=2)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="CASH")
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="PAID")
+    pickup_location = models.CharField(max_length=255)
+    farmer_phone = models.CharField(max_length=20)
+    admin_notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Bought {self.quantity} {self.unit} of {self.crop_name} from {self.farmer.full_name} (Rs. {self.total_amount})"
 
 
 class Order(models.Model):

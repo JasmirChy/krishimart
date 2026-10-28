@@ -14,6 +14,9 @@ import {
   ShieldAlert,
   Edit3,
   X,
+  CreditCard,
+  Receipt,
+  Eye,
 } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
@@ -21,9 +24,12 @@ export default function AdminPanel() {
   const [subTab, setSubTab] = useState("users");
   const [users, setUsers] = useState([]);
   const [submissions, setSubmissions] = useState([]);
+  const [purchases, setPurchases] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [toast, setToast] = useState(null);
+
+  // User search & filter states
   const [userSearch, setUserSearch] = useState("");
   const [userFilter, setUserFilter] = useState("ALL");
 
@@ -34,8 +40,21 @@ export default function AdminPanel() {
   const [replyText, setReplyText] = useState("");
   const chatContainerRef = useRef(null);
 
-  // Custom Review Modal for Farmer Submissions
-  const [reviewModal, setReviewModal] = useState(null); // { id, title, status, publishToStore, remarks }
+  // "Buy from Farmer" Procurement Modal State
+  const [buyModal, setBuyModal] = useState(null);
+  const [procureForm, setProcureForm] = useState({
+    quantity: "",
+    agreed_wholesale_rate: "",
+    payment_method: "CASH",
+    payment_status: "PAID",
+    admin_notes: "",
+    publish_to_store: true,
+    retail_price: "",
+  });
+
+  // Decline Modal State
+  const [declineModal, setDeclineModal] = useState(null);
+  const [declineRemarks, setDeclineRemarks] = useState("");
 
   // Edit Product Modal state
   const [editingProduct, setEditingProduct] = useState(null);
@@ -70,15 +89,17 @@ export default function AdminPanel() {
 
   const fetchAllAdminData = async () => {
     try {
-      const [uRes, sRes, pRes, oRes, tRes] = await Promise.all([
+      const [uRes, sRes, purRes, pRes, oRes, tRes] = await Promise.all([
         api.get("/accounts/admin/users/"),
         api.get("/marketplace/sell-submissions/"),
+        api.get("/marketplace/farmer-purchases/"),
         api.get("/marketplace/products/"),
         api.get("/marketplace/orders/"),
         api.get("/chat/messages/threads/"),
       ]);
       setUsers(uRes.data);
       setSubmissions(sRes.data);
+      setPurchases(purRes.data);
       setProducts(pRes.data);
       setOrders(oRes.data);
       setThreads(tRes.data);
@@ -94,7 +115,7 @@ export default function AdminPanel() {
     fetchAllAdminData();
   }, []);
 
-  // Poll chat messages for selected user & refresh unread counts
+  // Poll chat messages for selected user
   useEffect(() => {
     if (!selectedUser) return;
     const loadChat = async () => {
@@ -114,12 +135,54 @@ export default function AdminPanel() {
     return () => clearInterval(interval);
   }, [selectedUser]);
 
-  // Auto-scroll chat box when new messages arrive
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages.length, selectedUser?.id]);
+
+  const handleOpenBuyModal = (sub) => {
+    setBuyModal(sub);
+    setProcureForm({
+      quantity: sub.quantity,
+      agreed_wholesale_rate: sub.expected_price_per_unit,
+      payment_method: "CASH",
+      payment_status: "PAID",
+      admin_notes: `Harvest pickup from ${sub.pickup_location}. Quality verified.`,
+      publish_to_store: true,
+      retail_price: (Number(sub.expected_price_per_unit) * 1.2).toFixed(2), // suggested retail +20%
+    });
+  };
+
+  const handleConfirmPurchase = async (e) => {
+    e.preventDefault();
+    if (!buyModal) return;
+    try {
+      const res = await api.post(`/marketplace/sell-submissions/${buyModal.id}/buy_from_farmer/`, procureForm);
+      showToast(res.data.message || `Successfully bought ${buyModal.vegetable_name}!`);
+      setBuyModal(null);
+      fetchAllAdminData();
+    } catch (err) {
+      showToast(err.response?.data?.error || "Failed to complete purchase.", "error");
+    }
+  };
+
+  const handleConfirmDecline = async (e) => {
+    e.preventDefault();
+    if (!declineModal) return;
+    try {
+      await api.post(`/marketplace/sell-submissions/${declineModal.id}/review/`, {
+        status: "REJECTED",
+        admin_remarks: declineRemarks || "Declined: Current warehouse storage is full.",
+      });
+      showToast(`Declined offer for "${declineModal.vegetable_name}".`);
+      setDeclineModal(null);
+      setDeclineRemarks("");
+      fetchAllAdminData();
+    } catch {
+      showToast("Failed to decline offer.", "error");
+    }
+  };
 
   const handleToggleVerify = async (userId) => {
     try {
@@ -171,28 +234,7 @@ export default function AdminPanel() {
       fetchAllAdminData();
       showToast("New user created and verified!");
     } catch {
-      showToast("Check email/phone uniqueness and password (min 8 chars).", "error");
-    }
-  };
-
-  const submitFarmerReview = async (e) => {
-    e.preventDefault();
-    if (!reviewModal) return;
-    try {
-      await api.post(`/marketplace/sell-submissions/${reviewModal.id}/review/`, {
-        status: reviewModal.status,
-        admin_remarks: reviewModal.remarks,
-        publish_to_store: reviewModal.publishToStore,
-      });
-      showToast(
-        reviewModal.publishToStore
-          ? `Approved & published "${reviewModal.title}" to Store!`
-          : `Updated "${reviewModal.title}" status to ${reviewModal.status}.`
-      );
-      setReviewModal(null);
-      fetchAllAdminData();
-    } catch {
-      showToast("Failed to review submission.", "error");
+      showToast("Check email/phone uniqueness and password length.", "error");
     }
   };
 
@@ -236,7 +278,7 @@ export default function AdminPanel() {
         origin_location: editingProduct.origin_location,
         description: editingProduct.description,
       });
-      showToast(`Updated "${editingProduct.name}" inventory details.`);
+      showToast(`Updated "${editingProduct.name}" details.`);
       setEditingProduct(null);
       fetchAllAdminData();
     } catch {
@@ -284,10 +326,11 @@ export default function AdminPanel() {
   const pendingUsersCount = users.filter((u) => !u.is_admin_verified && !u.is_staff).length;
   const pendingSubmissionsCount = submissions.filter((s) => s.status === "PENDING").length;
   const totalUnreadChats = threads.reduce((acc, t) => acc + (t.unread_count || 0), 0);
+  const totalProcuredAmount = purchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
 
   return (
     <div className="space-y-6 relative">
-      {/* Floating Toast Notification */}
+      {/* Toast Notification */}
       {toast && (
         <div
           className={`fixed top-20 right-5 z-50 px-5 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition ${
@@ -299,7 +342,7 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* Top Summary Banner */}
+      {/* Top Banner & Tab Navigation */}
       <div className="bg-gradient-to-r from-[#1B4332] to-[#2D6A4F] rounded-3xl p-5 sm:p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-4">
         <div>
           <span className="text-xs uppercase tracking-widest text-amber-300 font-bold">
@@ -307,8 +350,7 @@ export default function AdminPanel() {
           </span>
           <h2 className="text-xl sm:text-2xl font-extrabold mt-1">Admin Management Dashboard</h2>
           <p className="text-xs sm:text-sm text-emerald-100">
-            Verify users, approve farmer vegetable offers, edit inventory, and reply to customer
-            chats.
+            Procure crops from farmers, verify accounts, manage inventory, and handle orders.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -316,15 +358,21 @@ export default function AdminPanel() {
             { id: "users", label: "Users & Verification", icon: Users, badge: pendingUsersCount },
             {
               id: "submissions",
-              label: "Farmer Sell Offers",
+              label: "Farmer Offers",
               icon: Sprout,
               badge: pendingSubmissionsCount,
             },
+            {
+              id: "purchases",
+              label: "Bought from Farmers",
+              icon: Receipt,
+              badge: purchases.length,
+            },
             { id: "products", label: "Store Inventory", icon: Package },
-            { id: "orders", label: "Orders", icon: ShoppingBag },
+            { id: "orders", label: "Customer Orders", icon: ShoppingBag },
             {
               id: "chat",
-              label: "User Chat Inbox",
+              label: "Chat Inbox",
               icon: MessageSquare,
               badge: totalUnreadChats,
             },
@@ -352,10 +400,11 @@ export default function AdminPanel() {
           })}
         </div>
       </div>
-{/* Live Admin Analytics KPI Row */}
+
+      {/* Top Financial & Procurement Analytics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Store Revenue</span>
+          <span className="text-xs font-bold text-slate-400 uppercase">Customer Sales</span>
           <p className="text-2xl font-black text-[#1B4332] mt-1">
             रु{" "}
             {orders
@@ -364,39 +413,34 @@ export default function AdminPanel() {
               .toLocaleString()}
           </p>
           <span className="text-[11px] text-emerald-700 font-semibold">
-            {orders.filter((o) => o.status === "DELIVERED").length} orders delivered
+            {orders.filter((o) => o.status === "DELIVERED").length} delivered
           </span>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Verified Accounts</span>
-          <p className="text-2xl font-black text-slate-900 mt-1">
-            {users.filter((u) => u.is_admin_verified || u.is_staff).length} / {users.length}
+          <span className="text-xs font-bold text-slate-400 uppercase">Paid to Farmers</span>
+          <p className="text-2xl font-black text-amber-700 mt-1">
+            रु {totalProcuredAmount.toLocaleString()}
           </p>
-          <span className="text-[11px] text-amber-700 font-semibold">
-            {pendingUsersCount} awaiting approval
+          <span className="text-[11px] text-slate-500 font-semibold">
+            {purchases.length} batches bought
           </span>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Farmer Sell Offers</span>
-          <p className="text-2xl font-black text-slate-900 mt-1">{submissions.length}</p>
-          <span className="text-[11px] text-amber-700 font-semibold">
-            {pendingSubmissionsCount} pending review
-          </span>
+          <span className="text-xs font-bold text-slate-400 uppercase">Pending Offers</span>
+          <p className="text-2xl font-black text-slate-900 mt-1">{pendingSubmissionsCount}</p>
+          <span className="text-[11px] text-amber-700 font-semibold">awaiting purchase</span>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Live Store Batches</span>
+          <span className="text-xs font-bold text-slate-400 uppercase">Store Batches</span>
           <p className="text-2xl font-black text-slate-900 mt-1">{products.length}</p>
-          <span className="text-[11px] text-emerald-700 font-semibold">
-            {products.filter((p) => Number(p.stock_quantity) > 0).length} in stock
-          </span>
+          <span className="text-[11px] text-emerald-700 font-semibold">in customer store</span>
         </div>
       </div>
 
-
-      {/* 1. USERS & VERIFICATION */}
+      {/* 1. USERS TAB */}
       {subTab === "users" && (
         <div className="grid lg:grid-cols-3 gap-6">
           <form
@@ -473,7 +517,7 @@ export default function AdminPanel() {
             </button>
           </form>
 
-          {/* Users List with Search & Status Filter */}
+          {/* Users List with Avatars */}
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
               <div className="flex flex-wrap justify-between items-center gap-2">
@@ -528,33 +572,51 @@ export default function AdminPanel() {
                     key={u.id}
                     className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
                   >
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-bold text-slate-900">{u.full_name}</p>
-                        <select
-                          value={u.role}
-                          onChange={(e) => handleChangeUserRole(u.id, e.target.value)}
-                          className="text-xs px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold"
-                        >
-                          <option value="CUSTOMER">CUSTOMER</option>
-                          <option value="FARMER">FARMER</option>
-                          <option value="ADMIN">ADMIN</option>
-                        </select>
-                        {u.is_admin_verified || u.is_staff ? (
-                          <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Verified
-                          </span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold overflow-hidden border border-slate-200 shrink-0">
+                        {u.profile_picture ? (
+                          <img
+                            src={
+                              u.profile_picture.startsWith("http")
+                                ? u.profile_picture
+                                : `${BACKEND_URL}${u.profile_picture}`
+                            }
+                            alt={u.full_name}
+                            className="w-full h-full object-cover"
+                          />
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
-                            <ShieldAlert className="w-3.5 h-3.5" /> Pending Approval
-                          </span>
+                          <span>{u.full_name?.charAt(0).toUpperCase()}</span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Email: <strong>{u.email || "—"}</strong> | Phone:{" "}
-                        <strong>{u.phone_number || "—"}</strong> | Location:{" "}
-                        <strong>{u.location || "—"}</strong>
-                      </p>
+
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-bold text-slate-900">{u.full_name}</p>
+                          <select
+                            value={u.role}
+                            onChange={(e) => handleChangeUserRole(u.id, e.target.value)}
+                            className="text-xs px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold"
+                          >
+                            <option value="CUSTOMER">CUSTOMER</option>
+                            <option value="FARMER">FARMER</option>
+                            <option value="ADMIN">ADMIN</option>
+                          </select>
+                          {u.is_admin_verified || u.is_staff ? (
+                            <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Verified
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                              <ShieldAlert className="w-3.5 h-3.5" /> Pending Approval
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Email: <strong>{u.email || "—"}</strong> | Phone:{" "}
+                          <strong>{u.phone_number || "—"}</strong> | Location:{" "}
+                          <strong>{u.location || "—"}</strong>
+                        </p>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -583,18 +645,18 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* 2. FARMER "SELL YOUR PRODUCTS" SUBMISSIONS */}
+      {/* 2. FARMER OFFERS TAB (FEATURING "BUY FROM FARMER" BUTTON) */}
       {subTab === "submissions" && (
         <div className="grid md:grid-cols-2 gap-6">
           {submissions.length === 0 ? (
             <div className="col-span-2 bg-white p-12 rounded-2xl text-center text-slate-500 border border-slate-200">
-              No farmer or customer product offers submitted yet.
+              No farmer wholesale crop offers submitted yet.
             </div>
           ) : (
             submissions.map((sub) => (
               <div
                 key={sub.id}
-                className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4"
+                className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4"
               >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
@@ -604,19 +666,21 @@ export default function AdminPanel() {
                       </span>
                       <h3 className="text-xl font-bold text-slate-900">{sub.vegetable_name}</h3>
                       <p className="text-xs text-slate-500">
-                        Submitted by <strong>{sub.seller_name}</strong> ({sub.seller_role})
+                        Offered by <strong>{sub.seller_name}</strong> ({sub.seller_role})
                       </p>
                     </div>
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        sub.status === "APPROVED"
+                        sub.status === "BOUGHT"
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : sub.status === "APPROVED"
                           ? "bg-emerald-100 text-emerald-800"
                           : sub.status === "REJECTED"
                           ? "bg-red-100 text-red-700"
                           : "bg-amber-100 text-amber-800"
                       }`}
                     >
-                      {sub.status}
+                      {sub.status === "BOUGHT" ? "✓ BOUGHT FROM FARMER" : sub.status}
                     </span>
                   </div>
 
@@ -624,7 +688,7 @@ export default function AdminPanel() {
                     <img
                       src={sub.image.startsWith("http") ? sub.image : `${BACKEND_URL}${sub.image}`}
                       alt={sub.vegetable_name}
-                      className="w-full h-44 object-cover rounded-xl border border-slate-100"
+                      className="w-full h-44 object-cover rounded-2xl border border-slate-100"
                     />
                   )}
 
@@ -634,73 +698,48 @@ export default function AdminPanel() {
 
                   <div className="grid grid-cols-2 gap-2 text-xs bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-100">
                     <div>
-                      <span className="text-slate-500 block">Available Quantity:</span>
+                      <span className="text-slate-500 block">Offered Quantity:</span>
                       <strong className="text-slate-900 text-sm">
                         {sub.quantity} {sub.unit}
                       </strong>
                     </div>
                     <div>
-                      <span className="text-slate-500 block">Expected Price:</span>
+                      <span className="text-slate-500 block">Wholesale Rate:</span>
                       <strong className="text-emerald-800 text-sm">
                         रु {sub.expected_price_per_unit} / {sub.unit}
                       </strong>
                     </div>
                     <div className="flex items-center gap-1 text-slate-700 col-span-2 pt-1">
                       <Phone className="w-3.5 h-3.5 text-emerald-700" />
-                      <strong>Contact:</strong> {sub.contact_phone}
+                      <strong>Farmer Phone:</strong> {sub.contact_phone}
                     </div>
                     <div className="flex items-center gap-1 text-slate-700 col-span-2">
                       <MapPin className="w-3.5 h-3.5 text-emerald-700" />
-                      <strong>Pickup Location:</strong> {sub.pickup_location}
+                      <strong>Pickup Farm Location:</strong> {sub.pickup_location}
                     </div>
                   </div>
+
+                  {sub.admin_remarks && (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+                      <strong>Procurement Note:</strong> {sub.admin_remarks}
+                    </div>
+                  )}
                 </div>
 
+                {/* Actions: "Buy from Farmer" replaces generic approve */}
                 <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
                   <button
-                    onClick={() =>
-                      setReviewModal({
-                        id: sub.id,
-                        title: sub.vegetable_name,
-                        status: "APPROVED",
-                        publishToStore: true,
-                        remarks:
-                          sub.admin_remarks ||
-                          "Approved & published! Our team will contact you for pickup.",
-                      })
-                    }
-                    className="flex-1 py-2 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl cursor-pointer"
+                    onClick={() => handleOpenBuyModal(sub)}
+                    className="flex-1 py-2.5 px-4 bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                   >
-                    Approve & Publish to Store
+                    <CreditCard className="w-4 h-4 text-amber-300" /> Buy from Farmer
                   </button>
                   <button
-                    onClick={() =>
-                      setReviewModal({
-                        id: sub.id,
-                        title: sub.vegetable_name,
-                        status: "APPROVED",
-                        publishToStore: false,
-                        remarks:
-                          sub.admin_remarks || "Approved for direct purchase by KrishiMart.",
-                      })
-                    }
-                    className="py-2 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold rounded-xl cursor-pointer"
-                  >
-                    Approve Only
-                  </button>
-                  <button
-                    onClick={() =>
-                      setReviewModal({
-                        id: sub.id,
-                        title: sub.vegetable_name,
-                        status: "REJECTED",
-                        publishToStore: false,
-                        remarks:
-                          sub.admin_remarks ||
-                          "Thank you, but we currently have full stock for this item.",
-                      })
-                    }
-                    className="py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-xl cursor-pointer"
+                    onClick={() => {
+                      setDeclineModal(sub);
+                      setDeclineRemarks("");
+                    }}
+                    className="py-2.5 px-4 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-xl cursor-pointer"
                   >
                     Decline
                   </button>
@@ -711,7 +750,92 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* 3. STORE INVENTORY (ADD, EDIT & DELETE PRODUCTS) */}
+      {/* 3. NEW TAB: BOUGHT FROM FARMERS LEDGER */}
+      {subTab === "purchases" && (
+        <div className="space-y-4">
+          <div className="bg-white p-5 rounded-3xl border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-900">
+                Official Farmer Procurement Ledger ({purchases.length} Transactions)
+              </h3>
+              <p className="text-xs text-slate-500">
+                Full breakdown of crops purchased from farmers, rates paid, and payment settlements.
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-slate-400 font-bold uppercase block">Total Disbursed</span>
+              <span className="text-2xl font-black text-[#14532D]">
+                रु {totalProcuredAmount.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {purchases.length === 0 ? (
+            <div className="bg-white rounded-3xl p-12 text-center text-slate-500 border border-slate-200">
+              No crops bought from farmers yet. Click "Buy from Farmer" on any offer to procure.
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {purchases.map((p) => (
+                <div
+                  key={p.id}
+                  className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3 flex flex-col justify-between"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-bold text-emerald-700 uppercase">
+                          {p.category}
+                        </span>
+                        <h4 className="font-extrabold text-base text-slate-900">{p.crop_name}</h4>
+                        <p className="text-xs text-slate-500">Farmer: <strong>{p.farmer_name}</strong></p>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                        {p.payment_status}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-2xl text-xs space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Purchased Qty:</span>
+                        <strong>{p.quantity} {p.unit}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Agreed Rate:</span>
+                        <strong>रु {p.agreed_wholesale_rate} / {p.unit}</strong>
+                      </div>
+                      <div className="flex justify-between border-t border-slate-200 pt-1 text-sm font-black text-[#14532D]">
+                        <span>Total Paid:</span>
+                        <span>रु {p.total_amount}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-700" /> {p.pickup_location}
+                    </p>
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <Phone className="w-3.5 h-3.5 text-emerald-700" /> {p.farmer_phone}
+                    </p>
+
+                    {p.admin_notes && (
+                      <p className="text-xs bg-emerald-50/70 p-2.5 rounded-xl text-emerald-950 border border-emerald-100">
+                        <strong>Notes:</strong> {p.admin_notes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Payment: {p.payment_method}</span>
+                    <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. STORE INVENTORY TAB */}
       {subTab === "products" && (
         <div className="grid lg:grid-cols-3 gap-6">
           <form
@@ -835,7 +959,7 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* 4. CUSTOMER ORDERS */}
+      {/* 5. ORDERS TAB */}
       {subTab === "orders" && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 divide-y divide-slate-100">
           {orders.length === 0 ? (
@@ -872,7 +996,7 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* 5. ADMIN LIVE CHAT INBOX */}
+      {/* 6. LIVE CHAT INBOX TAB */}
       {subTab === "chat" && (
         <div className="bg-white rounded-3xl shadow-sm border border-slate-200 grid md:grid-cols-3 overflow-hidden">
           <div className="border-b md:border-b-0 md:border-r border-slate-200 flex flex-col max-h-56 md:max-h-[560px]">
@@ -884,21 +1008,40 @@ export default function AdminPanel() {
                 <button
                   key={u.id}
                   onClick={() => setSelectedUser(u)}
-                  className={`w-full text-left p-3.5 hover:bg-emerald-50/60 transition flex items-center justify-between gap-2 cursor-pointer ${
+                  className={`w-full text-left p-3 hover:bg-emerald-50/60 transition flex items-center justify-between gap-2.5 cursor-pointer ${
                     selectedUser?.id === u.id
                       ? "bg-emerald-50 border-l-4 border-l-[#1B4332]"
                       : ""
                   }`}
                 >
-                  <div className="truncate">
-                    <p className="font-bold text-sm text-slate-900 truncate">{u.full_name}</p>
-                    <p className="text-xs text-slate-500 truncate">
-                      {u.role} • {u.location || u.phone_number || u.email}
-                    </p>
+                  <div className="flex items-center gap-2.5 truncate">
+                    <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden shrink-0">
+                      {u.profile_picture ? (
+                        <img
+                          src={
+                            u.profile_picture.startsWith("http")
+                              ? u.profile_picture
+                              : `${BACKEND_URL}${u.profile_picture}`
+                          }
+                          alt={u.full_name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span>{u.full_name?.charAt(0).toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div className="truncate leading-tight">
+                      <p className="font-bold text-xs sm:text-sm text-slate-900 truncate">
+                        {u.full_name}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {u.role} • {u.location || u.phone_number || u.email}
+                      </p>
+                    </div>
                   </div>
                   {u.unread_count > 0 && (
                     <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-extrabold shrink-0">
-                      {u.unread_count} new
+                      {u.unread_count}
                     </span>
                   )}
                 </button>
@@ -909,12 +1052,29 @@ export default function AdminPanel() {
           <div className="md:col-span-2 flex flex-col h-[500px] md:h-[560px] min-h-0">
             {selectedUser ? (
               <>
-                <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
-                  <div>
-                    <p className="font-bold text-base text-slate-900">{selectedUser.full_name}</p>
-                    <p className="text-xs text-slate-500">
-                      {selectedUser.role} • {selectedUser.location || "No location set"}
-                    </p>
+                <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden shrink-0">
+                      {selectedUser.profile_picture ? (
+                        <img
+                          src={
+                            selectedUser.profile_picture.startsWith("http")
+                              ? selectedUser.profile_picture
+                              : `${BACKEND_URL}${selectedUser.profile_picture}`
+                          }
+                          alt={selectedUser.full_name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span>{selectedUser.full_name?.charAt(0).toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-slate-900">{selectedUser.full_name}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {selectedUser.role} • {selectedUser.location || "No location set"}
+                      </p>
+                    </div>
                   </div>
                   <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
                     {chatMessages.length} messages
@@ -987,57 +1147,187 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* CUSTOM FARMER SUBMISSION REVIEW MODAL */}
-      {reviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      {/* DEDICATED "BUY FROM FARMER" PROCUREMENT MODAL */}
+      {buyModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <form
-            onSubmit={submitFarmerReview}
-            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
+            onSubmit={handleConfirmPurchase}
+            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-extrabold text-slate-900">
-                Review: {reviewModal.title}
-              </h3>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="text-xs font-bold text-emerald-700 uppercase">Crop Procurement</span>
+                <h3 className="text-xl font-extrabold text-slate-900">
+                  Buy "{buyModal.vegetable_name}" from {buyModal.seller_name}
+                </h3>
+              </div>
               <button
                 type="button"
-                onClick={() => setReviewModal(null)}
-                className="p-1 text-slate-400 hover:text-slate-700"
+                onClick={() => setBuyModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <p className="text-xs text-slate-500">
-              Action:{" "}
-              <strong className="text-slate-800">
-                {reviewModal.publishToStore
-                  ? "Approve & Publish to Store"
-                  : reviewModal.status}
-              </strong>
-            </p>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Admin Remarks / Pickup Instructions for Seller
+
+            <div className="p-3 bg-emerald-50 rounded-2xl text-xs space-y-1 text-emerald-950 border border-emerald-200">
+              <p>Farmer Phone: <strong>{buyModal.contact_phone}</strong></p>
+              <p>Pickup Location: <strong>{buyModal.pickup_location}</strong></p>
+              <p>Offered Wholesale: <strong>रु {buyModal.expected_price_per_unit} / {buyModal.unit}</strong></p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Purchased Quantity ({buyModal.unit}) *</label>
+                <input
+                  type="number"
+                  required
+                  value={procureForm.quantity}
+                  onChange={(e) => setProcureForm({ ...procureForm, quantity: e.target.value })}
+                  className="w-full px-3.5 py-2 border rounded-xl text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Agreed Wholesale Rate (रु/{buyModal.unit}) *</label>
+                <input
+                  type="number"
+                  required
+                  value={procureForm.agreed_wholesale_rate}
+                  onChange={(e) => setProcureForm({ ...procureForm, agreed_wholesale_rate: e.target.value })}
+                  className="w-full px-3.5 py-2 border rounded-xl text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Total Payout Calculation Banner */}
+            <div className="p-3.5 bg-slate-900 text-white rounded-2xl flex items-center justify-between">
+              <span className="text-xs font-bold">Total Payout to Farmer:</span>
+              <span className="text-xl font-black text-amber-400">
+                रु {(Number(procureForm.quantity || 0) * Number(procureForm.agreed_wholesale_rate || 0)).toLocaleString()}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Method</label>
+                <select
+                  value={procureForm.payment_method}
+                  onChange={(e) => setProcureForm({ ...procureForm, payment_method: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-xl text-xs bg-white"
+                >
+                  <option value="CASH">Cash on Pickup</option>
+                  <option value="BANK">Direct Bank Transfer</option>
+                  <option value="ESEWA">eSewa / Digital Wallet</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Settlement</label>
+                <select
+                  value={procureForm.payment_status}
+                  onChange={(e) => setProcureForm({ ...procureForm, payment_status: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-xl text-xs bg-white"
+                >
+                  <option value="PAID">Settled / Paid</option>
+                  <option value="PENDING">Pending upon physical pickup</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={procureForm.publish_to_store}
+                  onChange={(e) => setProcureForm({ ...procureForm, publish_to_store: e.target.checked })}
+                  className="w-4 h-4 rounded text-emerald-700"
+                />
+                Publish this bought batch directly to Customer Store for sale
               </label>
+
+              {procureForm.publish_to_store && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Customer Retail Selling Price (रु/{buyModal.unit})</label>
+                  <input
+                    type="number"
+                    value={procureForm.retail_price}
+                    onChange={(e) => setProcureForm({ ...procureForm, retail_price: e.target.value })}
+                    className="w-full px-3.5 py-2 border rounded-xl text-sm"
+                    placeholder="Enter retail price"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Admin Remarks & Notes for Farmer</label>
               <textarea
-                rows={3}
-                value={reviewModal.remarks}
-                onChange={(e) => setReviewModal({ ...reviewModal, remarks: e.target.value })}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                rows={2}
+                value={procureForm.admin_notes}
+                onChange={(e) => setProcureForm({ ...procureForm, admin_notes: e.target.value })}
+                className="w-full px-3.5 py-2 border rounded-xl text-xs"
+                placeholder="Pickup notes, driver phone, or invoice reference..."
               />
             </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setReviewModal(null)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer"
+                onClick={() => setBuyModal(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2.5 rounded-xl bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold"
               >
-                Confirm Decision
+                Confirm Purchase from Farmer
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* DECLINE MODAL */}
+      {declineModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleConfirmDecline}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-extrabold text-slate-900">Decline Crop Offer</h3>
+              <button type="button" onClick={() => setDeclineModal(null)} className="p-1 text-slate-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to decline <strong>{declineModal.vegetable_name}</strong> from {declineModal.seller_name}?
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Reason for Farmer</label>
+              <textarea
+                rows={3}
+                required
+                value={declineRemarks}
+                onChange={(e) => setDeclineRemarks(e.target.value)}
+                className="w-full px-3.5 py-2 border rounded-xl text-xs"
+                placeholder="e.g. Storage currently full for this crop..."
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDeclineModal(null)}
+                className="flex-1 py-2 rounded-xl border text-xs font-bold text-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2 rounded-xl bg-red-600 text-white text-xs font-bold"
+              >
+                Confirm Decline
               </button>
             </div>
           </form>

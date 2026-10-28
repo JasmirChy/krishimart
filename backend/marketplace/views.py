@@ -1,13 +1,14 @@
 from decimal import Decimal
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from accounts.permissions import IsAdminVerified, IsFarmerOrAdmin, IsSiteAdmin
-from .models import Product, SellProductSubmission, Order
+from .models import Product, SellProductSubmission, FarmerPurchase, Order
 from .serializers import (
     ProductSerializer,
     SellProductSubmissionSerializer,
+    FarmerPurchaseSerializer,
     OrderSerializer,
 )
 
@@ -70,10 +71,6 @@ INITIAL_NEPAL_PRODUCTS = [
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    """
-    Public store: Anyone (including guest visitors like Daraz) can browse and view products.
-    Only Admin can add, edit, or delete store products.
-    """
     serializer_class = ProductSerializer
 
     def get_queryset(self):
@@ -83,19 +80,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         return Product.objects.filter(is_available=True)
 
     def get_permissions(self):
-        # Allow guest visitors to browse products freely without logging in
         if self.action in ["list", "retrieve"]:
             return [AllowAny()]
         return [IsSiteAdmin()]
 
 
 class SellProductSubmissionViewSet(viewsets.ModelViewSet):
-    """
-    'Sell Your Products' Farmer Portal:
-    - ONLY verified Farmers (or Admin) can submit vegetable batches with their wholesale rates.
-    - Regular customers are blocked from selling.
-    - Admin reviews and can publish to the live store with 1 click.
-    """
     serializer_class = SellProductSubmissionSerializer
     permission_classes = [IsFarmerOrAdmin]
 
@@ -109,23 +99,47 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
         serializer.save(seller=self.request.user)
 
     @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
-    def review(self, request, pk=None):
+    def buy_from_farmer(self, request, pk=None):
+        """
+        Executes the 'Buy from Farmer' action:
+        Records a FarmerPurchase, updates submission status, and optionally adds it to the customer store.
+        """
         submission = self.get_object()
-        new_status = request.data.get("status")
-        admin_remarks = request.data.get("admin_remarks", "")
+        
+        purchased_qty = Decimal(str(request.data.get("quantity", submission.quantity)))
+        agreed_rate = Decimal(str(request.data.get("agreed_wholesale_rate", submission.expected_price_per_unit)))
+        total_amount = purchased_qty * agreed_rate
+        
+        payment_method = request.data.get("payment_method", "CASH")
+        payment_status = request.data.get("payment_status", "PAID")
+        admin_notes = request.data.get("admin_notes", "").strip()
+        publish_to_store = bool(request.data.get("publish_to_store", False))
+        retail_price = request.data.get("retail_price")
 
-        if new_status not in ["PENDING", "APPROVED", "REJECTED"]:
-            return Response(
-                {"error": "Invalid status. Choose PENDING, APPROVED, or REJECTED."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # 1. Create the official FarmerPurchase transaction record
+        purchase = FarmerPurchase.objects.create(
+            submission=submission,
+            farmer=submission.seller,
+            crop_name=submission.vegetable_name,
+            category=submission.category,
+            quantity=purchased_qty,
+            unit=submission.unit,
+            agreed_wholesale_rate=agreed_rate,
+            total_amount=total_amount,
+            payment_method=payment_method,
+            payment_status=payment_status,
+            pickup_location=submission.pickup_location,
+            farmer_phone=submission.contact_phone,
+            admin_notes=admin_notes,
+        )
 
-        submission.status = new_status
-        submission.admin_remarks = admin_remarks
+        # 2. Mark submission as BOUGHT
+        submission.status = "BOUGHT"
+        submission.admin_remarks = f"Bought by KrishiMart: {purchased_qty} {submission.unit} @ Rs. {agreed_rate}/{submission.unit} (Total: Rs. {total_amount}). {admin_notes}"
         submission.save()
 
-        # Publish directly to the live customer store
-        if new_status == "APPROVED" and request.data.get("publish_to_store"):
+        # 3. Optionally publish as an inventory product for customers to purchase
+        if publish_to_store:
             cat_upper = (submission.category or "").upper()
             if "FRUIT" in cat_upper:
                 mapped_cat = "FRUITS"
@@ -138,27 +152,73 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
             else:
                 mapped_cat = "VEGETABLES"
 
+            final_retail_price = Decimal(str(retail_price)) if retail_price else agreed_rate
+
             Product.objects.create(
                 name=submission.vegetable_name,
                 category=mapped_cat,
                 description=f"{submission.vegetable_description} (Grown by: {submission.seller.full_name})",
-                price=submission.expected_price_per_unit,
+                price=final_retail_price,
                 unit=submission.unit if submission.unit in ["kg", "g", "bundle", "crate", "quintal"] else "kg",
-                stock_quantity=submission.quantity,
+                stock_quantity=purchased_qty,
                 origin_location=submission.pickup_location,
                 image=submission.image,
                 is_available=True,
             )
 
+        return Response({
+            "message": f"Successfully purchased {purchased_qty} {submission.unit} from {submission.seller.full_name}!",
+            "purchase": FarmerPurchaseSerializer(purchase).data,
+            "submission": SellProductSubmissionSerializer(submission).data,
+        })
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
+    def review(self, request, pk=None):
+        submission = self.get_object()
+        new_status = request.data.get("status")
+        admin_remarks = request.data.get("admin_remarks", "")
+
+        if new_status not in ["PENDING", "APPROVED", "REJECTED", "BOUGHT"]:
+            return Response({"error": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+
+        submission.status = new_status
+        submission.admin_remarks = admin_remarks
+        submission.save()
         return Response(SellProductSubmissionSerializer(submission).data)
 
 
+class FarmerPurchaseViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Endpoints for procurement history:
+    - Admin views all bought products with total procurement expenditure.
+    - Farmers view their 'Sold to Admin' report with total earnings.
+    """
+    serializer_class = FarmerPurchaseSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.role == "ADMIN":
+            return FarmerPurchase.objects.all()
+        return FarmerPurchase.objects.filter(farmer=user)
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        user = request.user
+        if user.is_staff or user.role == "ADMIN":
+            purchases = FarmerPurchase.objects.all()
+        else:
+            purchases = FarmerPurchase.objects.filter(farmer=user)
+
+        total_amount = sum(p.total_amount for p in purchases)
+        total_batches = purchases.count()
+        return Response({
+            "total_amount": total_amount,
+            "total_batches": total_batches,
+        })
+
+
 class OrderViewSet(viewsets.ModelViewSet):
-    """
-    Orders endpoint:
-    - Verified Customers and Farmers can place orders.
-    - Automatic stock deduction on purchase, and automatic restoration on cancellation.
-    """
     serializer_class = OrderSerializer
     permission_classes = [IsAdminVerified]
 

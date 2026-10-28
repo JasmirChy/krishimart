@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Product, SellProductSubmission, Order
+from .models import Product, SellProductSubmission, FarmerPurchase, Order
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -12,6 +12,7 @@ class SellProductSubmissionSerializer(serializers.ModelSerializer):
     seller_name = serializers.CharField(source="seller.full_name", read_only=True)
     seller_email = serializers.CharField(source="seller.email", read_only=True)
     seller_role = serializers.CharField(source="seller.role", read_only=True)
+    seller_avatar = serializers.ImageField(source="seller.profile_picture", read_only=True)
 
     class Meta:
         model = SellProductSubmission
@@ -21,6 +22,7 @@ class SellProductSubmissionSerializer(serializers.ModelSerializer):
             "seller_name",
             "seller_email",
             "seller_role",
+            "seller_avatar",
             "vegetable_name",
             "category",
             "vegetable_description",
@@ -37,15 +39,33 @@ class SellProductSubmissionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "seller", "created_at", "updated_at"]
 
-    def validate_quantity(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Quantity must be greater than zero.")
-        return value
 
-    def validate_expected_price_per_unit(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Expected price must be greater than zero.")
-        return value
+class FarmerPurchaseSerializer(serializers.ModelSerializer):
+    farmer_name = serializers.CharField(source="farmer.full_name", read_only=True)
+    farmer_avatar = serializers.ImageField(source="farmer.profile_picture", read_only=True)
+
+    class Meta:
+        model = FarmerPurchase
+        fields = [
+            "id",
+            "submission",
+            "farmer",
+            "farmer_name",
+            "farmer_avatar",
+            "crop_name",
+            "category",
+            "quantity",
+            "unit",
+            "agreed_wholesale_rate",
+            "total_amount",
+            "payment_method",
+            "payment_status",
+            "pickup_location",
+            "farmer_phone",
+            "admin_notes",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
 
 
 class OrderSerializer(serializers.ModelSerializer):
