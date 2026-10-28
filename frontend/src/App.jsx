@@ -631,7 +631,7 @@ export default function App() {
               <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
               <input
                 type="text"
-                placeholder="Search vegetables, Mustang apples, Marsi rice..."
+                placeholder="Search vegetables, Fruits, Grains..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -1041,7 +1041,7 @@ export default function App() {
                     type="submit"
                     className="w-full py-3.5 bg-[#14532D] hover:bg-[#1B4332] text-white font-bold rounded-xl shadow-md transition cursor-pointer"
                   >
-                    Submit Harvest Batch to Admin
+                    Submit Harvest Batch to Manager for Approval
                   </button>
                 </form>
 
@@ -1052,14 +1052,14 @@ export default function App() {
                       Need Instant Rate Confirmation?
                     </h3>
                     <p className="text-xs text-emerald-100">
-                      Chat directly with our KrishiMart Admin team to negotiate bulk rates or
+                      Chat directly with our KrishiMart Managerial team to negotiate bulk rates or
                       schedule farm pickup.
                     </p>
                     <button
                       onClick={() => setChatDrawerOpen(true)}
                       className="mt-2 px-4 py-2 bg-amber-400 text-slate-950 font-bold text-xs rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
                     >
-                      <MessageCircle className="w-4 h-4" /> Open Live Chat with Admin
+                      <MessageCircle className="w-4 h-4" /> Open Live Chat with Manager
                     </button>
                   </div>
 
@@ -1196,7 +1196,7 @@ export default function App() {
                   <div className="max-w-7xl mx-auto grid lg:grid-cols-12 gap-8 sm:gap-10 items-center">
                     <div className="lg:col-span-7 space-y-5 sm:space-y-6">
                       <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-900/10 text-[#14532D] text-[11px] sm:text-xs font-bold">
-                        🌱 Empowering 12,000+ Local Farmers Across Nepal
+                        🌱 Empowering 100+ Local Farmers Across Nepal
                       </span>
 
                       <h1 className="text-3xl sm:text-5xl lg:text-[54px] font-black tracking-tight leading-[1.12] text-slate-900">
@@ -1205,8 +1205,8 @@ export default function App() {
                       </h1>
 
                       <p className="text-slate-600 text-sm sm:text-lg max-w-xl leading-relaxed">
-                        Discover crisp mountain produce, connect directly with verified growers
-                        across all 7 provinces, and bridge the distance between fertile Himalayan
+                        Discover crisp Nepali products, connect directly with verified growers
+                        across different places, and bridge the distance between fertile Nepali
                         soil and your dining table.
                       </p>
 
@@ -1241,7 +1241,7 @@ export default function App() {
                         <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
                           <p className="text-base sm:text-xl font-black text-slate-900">24 Hr</p>
                           <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-                            Valley Delivery
+                            City Delivery
                           </p>
                         </div>
                       </div>
@@ -1297,7 +1297,7 @@ export default function App() {
                         >
                           <option value="ALL">🌱 All Produce Categories</option>
                           <option value="VEGETABLES">Fresh Vegetables</option>
-                          <option value="FRUITS">Hill & Mountain Fruits</option>
+                          <option value="FRUITS">Fruits</option>
                           <option value="GRAINS">Grains & Cereals</option>
                           <option value="SPICES">Spices & Aromatics</option>
                           <option value="DAIRY">Dairy & Oils</option>
@@ -1317,6 +1317,8 @@ export default function App() {
                           <option value="Ilam">Ilam</option>
                           <option value="Chitwan">Chitwan</option>
                           <option value="Dhangadhi">Dhangadhi / Kailali</option>
+                          <option value="Kanchanpur">Kanchanpur</option>
+                          <option value="Bardiya">Bardiya</option>
                         </select>
                       </div>
                       <div className="sm:col-span-2 md:col-span-2">
@@ -2011,31 +2013,31 @@ export default function App() {
             </div>
             <p className="leading-relaxed text-slate-500">
               Empowering Nepal's agricultural backbone. Connecting local farmers, cooperatives, and
-              households through transparent pricing and Admin-verified trust.
+              households through transparent pricing and Manager-verified trust.
             </p>
           </div>
           <div>
             <h4 className="font-bold text-slate-900 mb-3">Market Categories</h4>
             <ul className="space-y-2">
               <li>Fresh Seasonal Vegetables</li>
-              <li>Indigenous Grains & Jumla Marsi</li>
-              <li>Mustang & Hill Orchard Fruits</li>
+              <li>Indigenous Grains </li>
+              <li>Fruits</li>
               <li>Organic Spices & Dairy</li>
             </ul>
           </div>
           <div>
             <h4 className="font-bold text-slate-900 mb-3">Farmer & Buyer Support</h4>
             <ul className="space-y-2">
-              <li>Sell Your Products to Admin</li>
+              <li>Sell Products to KrishiMart</li>
               <li>Track My Harvest Orders</li>
-              <li>Live Buyer–Seller–Admin Chat</li>
+              <li>Live Buyer–Seller–Manager Chat</li>
             </ul>
           </div>
           <div>
             <h4 className="font-bold text-slate-900 mb-3">Central Hub Contact</h4>
             <ul className="space-y-2">
-              <li>📍 Dhangadhi Hub & Kathmandu Valley</li>
-              <li>📞 +977-1-4423456 / 9840000000</li>
+              <li>📍 Dhangadhi Hub </li>
+              <li>📞 +977-9703931744 / 9766528500</li>
               <li>✉️ support@krishimart.com.np</li>
               <li>🕒 6:00 AM – 8:00 PM NPT Daily</li>
             </ul>
