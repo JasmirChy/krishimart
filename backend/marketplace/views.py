@@ -1,8 +1,9 @@
 from decimal import Decimal
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from accounts.permissions import IsAdminVerified, IsSiteAdmin
+from accounts.permissions import IsAdminVerified, IsFarmerOrAdmin, IsSiteAdmin
 from .models import Product, SellProductSubmission, Order
 from .serializers import (
     ProductSerializer,
@@ -70,8 +71,8 @@ INITIAL_NEPAL_PRODUCTS = [
 
 class ProductViewSet(viewsets.ModelViewSet):
     """
-    Verified users can browse products; only Admin can add, update, or delete store products.
-    Automatically seeds initial Nepali products into PostgreSQL if the table is empty.
+    Public store: Anyone (including guest visitors like Daraz) can browse and view products.
+    Only Admin can add, edit, or delete store products.
     """
     serializer_class = ProductSerializer
 
@@ -79,22 +80,24 @@ class ProductViewSet(viewsets.ModelViewSet):
         if not Product.objects.exists():
             for item in INITIAL_NEPAL_PRODUCTS:
                 Product.objects.create(**item)
-        return Product.objects.all()
+        return Product.objects.filter(is_available=True)
 
     def get_permissions(self):
+        # Allow guest visitors to browse products freely without logging in
         if self.action in ["list", "retrieve"]:
-            return [IsAdminVerified()]
+            return [AllowAny()]
         return [IsSiteAdmin()]
 
 
 class SellProductSubmissionViewSet(viewsets.ModelViewSet):
     """
-    'Sell Your Products' endpoint:
-    - Verified Farmers/Customers can submit their vegetables & view their own submissions.
-    - Admin can view all farmer submissions, approve/reject them, and publish to the store.
+    'Sell Your Products' Farmer Portal:
+    - ONLY verified Farmers (or Admin) can submit vegetable batches with their wholesale rates.
+    - Regular customers are blocked from selling.
+    - Admin reviews and can publish to the live store with 1 click.
     """
     serializer_class = SellProductSubmissionSerializer
-    permission_classes = [IsAdminVerified]
+    permission_classes = [IsFarmerOrAdmin]
 
     def get_queryset(self):
         user = self.request.user
@@ -121,6 +124,7 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
         submission.admin_remarks = admin_remarks
         submission.save()
 
+        # Publish directly to the live customer store
         if new_status == "APPROVED" and request.data.get("publish_to_store"):
             cat_upper = (submission.category or "").upper()
             if "FRUIT" in cat_upper:
@@ -137,18 +141,24 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
             Product.objects.create(
                 name=submission.vegetable_name,
                 category=mapped_cat,
-                description=submission.vegetable_description,
+                description=f"{submission.vegetable_description} (Grown by: {submission.seller.full_name})",
                 price=submission.expected_price_per_unit,
                 unit=submission.unit if submission.unit in ["kg", "g", "bundle", "crate", "quintal"] else "kg",
                 stock_quantity=submission.quantity,
                 origin_location=submission.pickup_location,
                 image=submission.image,
+                is_available=True,
             )
 
         return Response(SellProductSubmissionSerializer(submission).data)
 
 
 class OrderViewSet(viewsets.ModelViewSet):
+    """
+    Orders endpoint:
+    - Verified Customers and Farmers can place orders.
+    - Automatic stock deduction on purchase, and automatic restoration on cancellation.
+    """
     serializer_class = OrderSerializer
     permission_classes = [IsAdminVerified]
 
@@ -176,7 +186,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         old_status = instance.status
         updated_order = serializer.save()
 
-        # Restore stock quantity if order transitions to CANCELLED
         if old_status != "CANCELLED" and updated_order.status == "CANCELLED":
             product = updated_order.product
             product.stock_quantity += updated_order.quantity

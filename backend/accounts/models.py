@@ -60,6 +60,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="CUSTOMER")
     location = models.CharField(max_length=255, blank=True, default="")
+    profile_picture = models.ImageField(upload_to="avatars/", null=True, blank=True)
 
     # Admin verification gate: False for new users until Admin approves them
     is_admin_verified = models.BooleanField(default=False)
@@ -71,7 +72,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     objects = UserManager()
 
-    # Use email as the default identifier for createsuperuser, while our custom backend supports both
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["full_name", "phone_number"]
 
@@ -85,4 +85,4 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         identifier = self.email or self.phone_number
-        return f"{self.full_name} ({identifier})"
+        return f"{self.full_name} ({identifier}) [{self.role}]"

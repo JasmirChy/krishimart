@@ -14,6 +14,7 @@ class UserSerializer(serializers.ModelSerializer):
             "phone_number",
             "role",
             "location",
+            "profile_picture",
             "is_admin_verified",
             "is_active",
             "is_staff",
@@ -25,6 +26,7 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True, min_length=8)
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = User
@@ -34,6 +36,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "phone_number",
             "role",
             "location",
+            "profile_picture",
             "password",
             "confirm_password",
         ]
@@ -72,16 +75,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         user = User.objects.create_user(
             password=password,
-            is_admin_verified=False,  # Must be verified by Admin before accessing features
+            is_admin_verified=False,
             **validated_data,
         )
         return user
 
 
 class LoginSerializer(serializers.Serializer):
-    identifier = serializers.CharField(
-        help_text="Enter your registered Email or Phone Number"
-    )
+    identifier = serializers.CharField(help_text="Enter your registered Email or Phone Number")
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
@@ -95,14 +96,10 @@ class LoginSerializer(serializers.Serializer):
         )
 
         if not user:
-            raise serializers.ValidationError(
-                "Invalid email/phone number or password."
-            )
+            raise serializers.ValidationError("Invalid email/phone number or password.")
 
         if not user.is_active:
-            raise serializers.ValidationError(
-                "This account has been deactivated by the Admin."
-            )
+            raise serializers.ValidationError("This account has been deactivated by the Admin.")
 
         refresh = RefreshToken.for_user(user)
         return {
