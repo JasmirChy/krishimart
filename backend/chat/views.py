@@ -1,4 +1,4 @@
-from django.db.models import Count, Max
+from django.db.models import Count, Max, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -17,11 +17,21 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
         user = self.request.user
         user_id = self.request.query_params.get("user_id")
 
-        # When Admin requests a specific user's thread in Admin Panel
+        # When Admin opens a specific user's thread, mark that user's messages as read
         if user_id and (user.is_staff or user.role == "ADMIN"):
+            ChatMessage.objects.filter(
+                conversation_user_id=user_id,
+                is_admin_reply=False,
+                is_read=False,
+            ).update(is_read=True)
             return ChatMessage.objects.filter(conversation_user_id=user_id).order_by("created_at")
 
-        # Default: return the logged-in user's own conversation thread
+        # When a Customer/Farmer opens their chat, mark Admin replies as read
+        ChatMessage.objects.filter(
+            conversation_user=user,
+            is_admin_reply=True,
+            is_read=False,
+        ).update(is_read=True)
         return ChatMessage.objects.filter(conversation_user=user).order_by("created_at")
 
     def create(self, request, *args, **kwargs):
@@ -56,6 +66,7 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
             sender=user,
             message=message_text,
             is_admin_reply=is_admin_sending,
+            is_read=False,
         )
         return Response(
             ChatMessageSerializer(chat_msg).data,
@@ -65,13 +76,37 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], permission_classes=[IsSiteAdmin])
     def threads(self, request):
         """
-        Returns all users (prioritizing users who have sent chat messages) for the Admin Chat sidebar.
+        Returns all users annotated with unread message count and latest message time.
         """
         users = (
             User.objects.annotate(
-                msg_count=Count("conversation_messages"),
+                total_messages=Count("conversation_messages"),
+                unread_count=Count(
+                    "conversation_messages",
+                    filter=Q(
+                        conversation_messages__is_admin_reply=False,
+                        conversation_messages__is_read=False,
+                    ),
+                ),
                 last_msg=Max("conversation_messages__created_at"),
             )
-            .order_by("-last_msg", "-created_at")
+            .order_by("-unread_count", "-last_msg", "-created_at")
         )
-        return Response(UserSerializer(users, many=True).data)
+        data = []
+        for u in users:
+            serialized = UserSerializer(u).data
+            serialized["unread_count"] = u.unread_count
+            serialized["total_messages"] = u.total_messages
+            data.append(serialized)
+        return Response(data)
+
+    @action(detail=False, methods=["get"])
+    def unread_count(self, request):
+        user = request.user
+        if user.is_staff or user.role == "ADMIN":
+            count = ChatMessage.objects.filter(is_admin_reply=False, is_read=False).count()
+        else:
+            count = ChatMessage.objects.filter(
+                conversation_user=user, is_admin_reply=True, is_read=False
+            ).count()
+        return Response({"unread_count": count})

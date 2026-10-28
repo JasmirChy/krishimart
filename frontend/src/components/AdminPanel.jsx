@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Users,
   Sprout,
@@ -6,13 +6,14 @@ import {
   ShoppingBag,
   MessageSquare,
   CheckCircle2,
-  XCircle,
   Trash2,
   Plus,
   Send,
   MapPin,
   Phone,
   ShieldAlert,
+  Edit3,
+  X,
 } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
@@ -22,12 +23,20 @@ export default function AdminPanel() {
   const [submissions, setSubmissions] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [toast, setToast] = useState(null);
 
   // Admin Chat state
   const [threads, setThreads] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [replyText, setReplyText] = useState("");
+  const chatContainerRef = useRef(null);
+
+  // Custom Review Modal for Farmer Submissions
+  const [reviewModal, setReviewModal] = useState(null); // { id, title, status, publishToStore, remarks }
+
+  // Edit Product Modal state
+  const [editingProduct, setEditingProduct] = useState(null);
 
   // Add Product state
   const [newProduct, setNewProduct] = useState({
@@ -51,6 +60,11 @@ export default function AdminPanel() {
     password: "",
     confirm_password: "",
   });
+
+  const showToast = (message, type = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const fetchAllAdminData = async () => {
     try {
@@ -78,13 +92,17 @@ export default function AdminPanel() {
     fetchAllAdminData();
   }, []);
 
-  // Poll chat messages for selected user
+  // Poll chat messages for selected user & refresh unread counts
   useEffect(() => {
     if (!selectedUser) return;
     const loadChat = async () => {
       try {
-        const res = await api.get(`/chat/messages/?user_id=${selectedUser.id}`);
-        setChatMessages(res.data);
+        const [msgRes, threadRes] = await Promise.all([
+          api.get(`/chat/messages/?user_id=${selectedUser.id}`),
+          api.get("/chat/messages/threads/"),
+        ]);
+        setChatMessages(msgRes.data);
+        setThreads(threadRes.data);
       } catch (err) {
         console.error(err);
       }
@@ -94,22 +112,43 @@ export default function AdminPanel() {
     return () => clearInterval(interval);
   }, [selectedUser]);
 
+  // Auto-scroll chat box when new messages arrive
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages.length, selectedUser?.id]);
+
   const handleToggleVerify = async (userId) => {
     try {
-      await api.post(`/accounts/admin/users/${userId}/toggle_verification/`);
+      const res = await api.post(`/accounts/admin/users/${userId}/toggle_verification/`);
+      showToast(res.data.message || "User verification status updated.");
       fetchAllAdminData();
-    } catch (err) {
-      alert("Failed to update user verification.");
+    } catch {
+      showToast("Failed to update user verification.", "error");
     }
   };
 
-  const handleDeleteUser = async (userId) => {
-    if (!window.confirm("Are you sure you want to delete this user?")) return;
+  const handleChangeUserRole = async (userId, newRole) => {
+    try {
+      await api.patch(`/accounts/admin/users/${userId}/`, {
+        role: newRole,
+        is_staff: newRole === "ADMIN",
+      });
+      showToast(`User role updated to ${newRole}.`);
+      fetchAllAdminData();
+    } catch {
+      showToast("Failed to update user role.", "error");
+    }
+  };
+
+  const handleDeleteUser = async (userId, fullName) => {
     try {
       await api.delete(`/accounts/admin/users/${userId}/`);
+      showToast(`Deleted user ${fullName}.`);
       fetchAllAdminData();
-    } catch (err) {
-      alert("Could not delete user.");
+    } catch {
+      showToast("Could not delete user.", "error");
     }
   };
 
@@ -117,7 +156,6 @@ export default function AdminPanel() {
     e.preventDefault();
     try {
       const res = await api.post("/accounts/register/", newUser);
-      // Auto-verify user added directly by Admin
       await api.post(`/accounts/admin/users/${res.data.user.id}/toggle_verification/`);
       setNewUser({
         full_name: "",
@@ -129,27 +167,30 @@ export default function AdminPanel() {
         confirm_password: "",
       });
       fetchAllAdminData();
-      alert("User added and verified!");
-    } catch (err) {
-      alert("Failed to add user. Check email/phone uniqueness and password length (min 8).");
+      showToast("New user created and verified!");
+    } catch {
+      showToast("Check email/phone uniqueness and password (min 8 chars).", "error");
     }
   };
 
-  const handleReviewSubmission = async (id, status, publishToStore = false) => {
-    const remarks = window.prompt(
-      "Optional remarks for the farmer/seller:",
-      status === "APPROVED" ? "Approved! Our team will contact you for pickup." : ""
-    );
-    if (remarks === null) return;
+  const submitFarmerReview = async (e) => {
+    e.preventDefault();
+    if (!reviewModal) return;
     try {
-      await api.post(`/marketplace/sell-submissions/${id}/review/`, {
-        status,
-        admin_remarks: remarks,
-        publish_to_store: publishToStore,
+      await api.post(`/marketplace/sell-submissions/${reviewModal.id}/review/`, {
+        status: reviewModal.status,
+        admin_remarks: reviewModal.remarks,
+        publish_to_store: reviewModal.publishToStore,
       });
+      showToast(
+        reviewModal.publishToStore
+          ? `Approved & published "${reviewModal.title}" to Store!`
+          : `Updated "${reviewModal.title}" status to ${reviewModal.status}.`
+      );
+      setReviewModal(null);
       fetchAllAdminData();
-    } catch (err) {
-      alert("Failed to review submission.");
+    } catch {
+      showToast("Failed to review submission.", "error");
     }
   };
 
@@ -173,24 +214,55 @@ export default function AdminPanel() {
         description: "",
         image: null,
       });
+      showToast("Product published to store!");
       fetchAllAdminData();
-    } catch (err) {
-      alert("Failed to add product.");
+    } catch {
+      showToast("Failed to add product.", "error");
     }
   };
 
-  const handleDeleteProduct = async (id) => {
-    if (!window.confirm("Remove this product from the store?")) return;
-    await api.delete(`/marketplace/products/${id}/`);
-    fetchAllAdminData();
+  const handleSaveProductEdit = async (e) => {
+    e.preventDefault();
+    if (!editingProduct) return;
+    try {
+      await api.patch(`/marketplace/products/${editingProduct.id}/`, {
+        name: editingProduct.name,
+        category: editingProduct.category,
+        price: editingProduct.price,
+        unit: editingProduct.unit,
+        stock_quantity: editingProduct.stock_quantity,
+        origin_location: editingProduct.origin_location,
+        description: editingProduct.description,
+      });
+      showToast(`Updated "${editingProduct.name}" inventory details.`);
+      setEditingProduct(null);
+      fetchAllAdminData();
+    } catch {
+      showToast("Could not update product.", "error");
+    }
+  };
+
+  const handleDeleteProduct = async (id, name) => {
+    try {
+      await api.delete(`/marketplace/products/${id}/`);
+      showToast(`Removed "${name}" from store.`);
+      fetchAllAdminData();
+    } catch {
+      showToast("Failed to delete product.", "error");
+    }
   };
 
   const handleOrderStatus = async (orderId, status) => {
-    await api.patch(`/marketplace/orders/${orderId}/`, { status });
-    fetchAllAdminData();
+    try {
+      await api.patch(`/marketplace/orders/${orderId}/`, { status });
+      showToast(`Order #${orderId} marked as ${status}.`);
+      fetchAllAdminData();
+    } catch {
+      showToast("Could not update order status.", "error");
+    }
   };
 
-const handleSendAdminReply = async (e) => {
+  const handleSendAdminReply = async (e) => {
     e.preventDefault();
     if (!replyText.trim() || !selectedUser) return;
     try {
@@ -203,23 +275,38 @@ const handleSendAdminReply = async (e) => {
       const res = await api.get(`/chat/messages/?user_id=${selectedUser.id}`);
       setChatMessages(res.data);
     } catch (err) {
-      alert(err.response?.data?.error || "Could not send message.");
+      showToast(err.response?.data?.error || "Could not send message.", "error");
     }
   };
+
   const pendingUsersCount = users.filter((u) => !u.is_admin_verified && !u.is_staff).length;
   const pendingSubmissionsCount = submissions.filter((s) => s.status === "PENDING").length;
+  const totalUnreadChats = threads.reduce((acc, t) => acc + (t.unread_count || 0), 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed top-20 right-5 z-50 px-5 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition ${
+            toast.type === "error" ? "bg-red-600 text-white" : "bg-[#14532D] text-white"
+          }`}
+        >
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{toast.message}</span>
+        </div>
+      )}
+
       {/* Top Summary Banner */}
-      <div className="bg-gradient-to-r from-[#1B4332] to-[#2D6A4F] rounded-3xl p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-[#1B4332] to-[#2D6A4F] rounded-3xl p-5 sm:p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-4">
         <div>
           <span className="text-xs uppercase tracking-widest text-amber-300 font-bold">
             KrishiMart Control Center
           </span>
-          <h2 className="text-2xl font-extrabold mt-1">Admin Management Dashboard</h2>
-          <p className="text-sm text-emerald-100">
-            Verify users, approve farmer vegetable offers, manage inventory, and chat with customers.
+          <h2 className="text-xl sm:text-2xl font-extrabold mt-1">Admin Management Dashboard</h2>
+          <p className="text-xs sm:text-sm text-emerald-100">
+            Verify users, approve farmer vegetable offers, edit inventory, and reply to customer
+            chats.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -233,14 +320,19 @@ const handleSendAdminReply = async (e) => {
             },
             { id: "products", label: "Store Inventory", icon: Package },
             { id: "orders", label: "Orders", icon: ShoppingBag },
-            { id: "chat", label: "User Chat Inbox", icon: MessageSquare },
+            {
+              id: "chat",
+              label: "User Chat Inbox",
+              icon: MessageSquare,
+              badge: totalUnreadChats,
+            },
           ].map((tab) => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
                 onClick={() => setSubTab(tab.id)}
-                className={`px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition cursor-pointer ${
                   subTab === tab.id
                     ? "bg-amber-500 text-slate-950 shadow-md"
                     : "bg-white/10 text-white hover:bg-white/20"
@@ -262,12 +354,11 @@ const handleSendAdminReply = async (e) => {
       {/* 1. USERS & VERIFICATION */}
       {subTab === "users" && (
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Add User Form */}
           <form
             onSubmit={handleCreateUser}
             className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3 h-fit"
           >
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Plus className="w-5 h-5 text-emerald-700" /> Add & Verify New User
             </h3>
             <input
@@ -337,7 +428,7 @@ const handleSendAdminReply = async (e) => {
             </button>
           </form>
 
-          {/* Users Table */}
+          {/* Users List */}
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-5 border-b border-slate-100 flex justify-between items-center">
               <h3 className="font-bold text-slate-900">All Registered Users ({users.length})</h3>
@@ -352,18 +443,24 @@ const handleSendAdminReply = async (e) => {
                   className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
                 >
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <p className="font-bold text-slate-900">{u.full_name}</p>
-                      <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold">
-                        {u.role}
-                      </span>
+                      <select
+                        value={u.role}
+                        onChange={(e) => handleChangeUserRole(u.id, e.target.value)}
+                        className="text-xs px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold"
+                      >
+                        <option value="CUSTOMER">CUSTOMER</option>
+                        <option value="FARMER">FARMER</option>
+                        <option value="ADMIN">ADMIN</option>
+                      </select>
                       {u.is_admin_verified || u.is_staff ? (
                         <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Verified
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
-                          <ShieldAlert className="w-3.5 h-3.5" /> Pending Admin Approval
+                          <ShieldAlert className="w-3.5 h-3.5" /> Pending Approval
                         </span>
                       )}
                     </div>
@@ -374,27 +471,25 @@ const handleSendAdminReply = async (e) => {
                     </p>
                   </div>
 
-                  {!u.is_staff && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleVerify(u.id)}
-                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          u.is_admin_verified
-                            ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
-                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                        }`}
-                      >
-                        {u.is_admin_verified ? "Revoke Access" : "Verify & Approve"}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteUser(u.id)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
-                        title="Delete User"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleToggleVerify(u.id)}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                        u.is_admin_verified
+                          ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
+                          : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                      }`}
+                    >
+                      {u.is_admin_verified ? "Revoke Access" : "Verify & Approve"}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteUser(u.id, u.full_name)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
+                      title="Delete User"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -461,7 +556,7 @@ const handleSendAdminReply = async (e) => {
                     <div>
                       <span className="text-slate-500 block">Expected Price:</span>
                       <strong className="text-emerald-800 text-sm">
-                        Rs. {sub.expected_price_per_unit} / {sub.unit}
+                        रु {sub.expected_price_per_unit} / {sub.unit}
                       </strong>
                     </div>
                     <div className="flex items-center gap-1 text-slate-700 col-span-2 pt-1">
@@ -477,19 +572,48 @@ const handleSendAdminReply = async (e) => {
 
                 <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
                   <button
-                    onClick={() => handleReviewSubmission(sub.id, "APPROVED", true)}
+                    onClick={() =>
+                      setReviewModal({
+                        id: sub.id,
+                        title: sub.vegetable_name,
+                        status: "APPROVED",
+                        publishToStore: true,
+                        remarks:
+                          sub.admin_remarks ||
+                          "Approved & published! Our team will contact you for pickup.",
+                      })
+                    }
                     className="flex-1 py-2 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl cursor-pointer"
                   >
                     Approve & Publish to Store
                   </button>
                   <button
-                    onClick={() => handleReviewSubmission(sub.id, "APPROVED", false)}
+                    onClick={() =>
+                      setReviewModal({
+                        id: sub.id,
+                        title: sub.vegetable_name,
+                        status: "APPROVED",
+                        publishToStore: false,
+                        remarks:
+                          sub.admin_remarks || "Approved for direct purchase by KrishiMart.",
+                      })
+                    }
                     className="py-2 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold rounded-xl cursor-pointer"
                   >
                     Approve Only
                   </button>
                   <button
-                    onClick={() => handleReviewSubmission(sub.id, "REJECTED", false)}
+                    onClick={() =>
+                      setReviewModal({
+                        id: sub.id,
+                        title: sub.vegetable_name,
+                        status: "REJECTED",
+                        publishToStore: false,
+                        remarks:
+                          sub.admin_remarks ||
+                          "Thank you, but we currently have full stock for this item.",
+                      })
+                    }
                     className="py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-xl cursor-pointer"
                   >
                     Decline
@@ -501,7 +625,7 @@ const handleSendAdminReply = async (e) => {
         </div>
       )}
 
-      {/* 3. STORE INVENTORY */}
+      {/* 3. STORE INVENTORY (ADD, EDIT & DELETE PRODUCTS) */}
       {subTab === "products" && (
         <div className="grid lg:grid-cols-3 gap-6">
           <form
@@ -544,7 +668,7 @@ const handleSendAdminReply = async (e) => {
               <input
                 type="number"
                 required
-                placeholder="Price (Rs.) *"
+                placeholder="Price (रु) *"
                 value={newProduct.price}
                 onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
                 className="px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
@@ -587,25 +711,38 @@ const handleSendAdminReply = async (e) => {
             </button>
           </form>
 
-          <div className="lg:col-span-2 grid sm:grid-cols-2 gap-4">
+          <div className="lg:col-span-2 grid sm:grid-cols-2 gap-4 h-fit">
             {products.map((p) => (
               <div
                 key={p.id}
-                className="bg-white p-4 rounded-2xl border border-slate-200 flex justify-between items-center gap-4"
+                className="bg-white p-4 rounded-2xl border border-slate-200 flex justify-between items-center gap-3"
               >
                 <div>
                   <span className="text-[11px] font-bold text-emerald-700">{p.category}</span>
                   <h4 className="font-bold text-slate-900">{p.name}</h4>
                   <p className="text-xs text-slate-500">
-                    Rs. {p.price} / {p.unit} • Stock: {p.stock_quantity} {p.unit}
+                    रु {p.price} / {p.unit} • Stock: <strong>{p.stock_quantity}</strong> {p.unit}
                   </p>
+                  {p.origin_location && (
+                    <p className="text-[11px] text-slate-400">📍 {p.origin_location}</p>
+                  )}
                 </div>
-                <button
-                  onClick={() => handleDeleteProduct(p.id)}
-                  className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setEditingProduct({ ...p })}
+                    className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl cursor-pointer"
+                    title="Edit Price or Stock"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteProduct(p.id, p.name)}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
+                    title="Delete Product"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -625,7 +762,7 @@ const handleSendAdminReply = async (e) => {
               >
                 <div>
                   <p className="font-bold text-slate-900">
-                    Order #{o.id}: {o.product_name} ({o.quantity} {o.product_unit}) — Rs.{" "}
+                    Order #{o.id}: {o.product_name} ({o.quantity} {o.product_unit}) — रु{" "}
                     {o.total_price}
                   </p>
                   <p className="text-xs text-slate-500">
@@ -649,10 +786,9 @@ const handleSendAdminReply = async (e) => {
         </div>
       )}
 
-    {/* 5. ADMIN LIVE CHAT INBOX */}
+      {/* 5. ADMIN LIVE CHAT INBOX */}
       {subTab === "chat" && (
         <div className="bg-white rounded-3xl shadow-sm border border-slate-200 grid md:grid-cols-3 overflow-hidden">
-          {/* Left Sidebar: Buyers & Farmers List (Scrollable) */}
           <div className="border-b md:border-b-0 md:border-r border-slate-200 flex flex-col max-h-56 md:max-h-[560px]">
             <div className="p-4 border-b border-slate-100 font-bold text-sm text-slate-800 bg-slate-50 shrink-0">
               Buyers & Farmers ({threads.length})
@@ -662,26 +798,31 @@ const handleSendAdminReply = async (e) => {
                 <button
                   key={u.id}
                   onClick={() => setSelectedUser(u)}
-                  className={`w-full text-left p-3.5 hover:bg-emerald-50/60 transition cursor-pointer ${
+                  className={`w-full text-left p-3.5 hover:bg-emerald-50/60 transition flex items-center justify-between gap-2 cursor-pointer ${
                     selectedUser?.id === u.id
                       ? "bg-emerald-50 border-l-4 border-l-[#1B4332]"
                       : ""
                   }`}
                 >
-                  <p className="font-bold text-sm text-slate-900">{u.full_name}</p>
-                  <p className="text-xs text-slate-500">
-                    {u.role} • {u.location || u.phone_number || u.email}
-                  </p>
+                  <div className="truncate">
+                    <p className="font-bold text-sm text-slate-900 truncate">{u.full_name}</p>
+                    <p className="text-xs text-slate-500 truncate">
+                      {u.role} • {u.location || u.phone_number || u.email}
+                    </p>
+                  </div>
+                  {u.unread_count > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-extrabold shrink-0">
+                      {u.unread_count} new
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Right Panel: Conversation Messages + Pinned Reply Box */}
           <div className="md:col-span-2 flex flex-col h-[500px] md:h-[560px] min-h-0">
             {selectedUser ? (
               <>
-                {/* Pinned Header */}
                 <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                   <div>
                     <p className="font-bold text-base text-slate-900">{selectedUser.full_name}</p>
@@ -694,8 +835,10 @@ const handleSendAdminReply = async (e) => {
                   </span>
                 </div>
 
-                {/* Scrollable Messages Container */}
-                <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3 bg-[#F8FAF7]">
+                <div
+                  ref={chatContainerRef}
+                  className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3 bg-[#F8FAF7]"
+                >
                   {chatMessages.length === 0 ? (
                     <p className="text-center text-xs text-slate-400 mt-12">
                       No messages in this conversation yet. Say hello!
@@ -713,11 +856,16 @@ const handleSendAdminReply = async (e) => {
                               : "bg-white border border-slate-200 text-slate-800 rounded-bl-none"
                           }`}
                         >
-                          <p className=" break-words">{m.message}</p>
+                          <p className="break-words">{m.message}</p>
                           <span className="block text-[10px] opacity-75 mt-1">
                             {m.is_from_admin
                               ? "KrishiMart Admin (You)"
-                              : m.conversation_user_name}
+                              : m.conversation_user_name}{" "}
+                            •{" "}
+                            {new Date(m.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </span>
                         </div>
                       </div>
@@ -725,7 +873,6 @@ const handleSendAdminReply = async (e) => {
                   )}
                 </div>
 
-                {/* Pinned Bottom Input Form */}
                 <form
                   onSubmit={handleSendAdminReply}
                   className="p-3.5 border-t border-slate-200 flex gap-2 bg-white shrink-0"
@@ -751,6 +898,161 @@ const handleSendAdminReply = async (e) => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* CUSTOM FARMER SUBMISSION REVIEW MODAL */}
+      {reviewModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={submitFarmerReview}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-extrabold text-slate-900">
+                Review: {reviewModal.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setReviewModal(null)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Action:{" "}
+              <strong className="text-slate-800">
+                {reviewModal.publishToStore
+                  ? "Approve & Publish to Store"
+                  : reviewModal.status}
+              </strong>
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Admin Remarks / Pickup Instructions for Seller
+              </label>
+              <textarea
+                rows={3}
+                value={reviewModal.remarks}
+                onChange={(e) => setReviewModal({ ...reviewModal, remarks: e.target.value })}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setReviewModal(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2.5 rounded-xl bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
+              >
+                Confirm Decision
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* EDIT STORE PRODUCT MODAL */}
+      {editingProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveProductEdit}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3.5 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-extrabold text-slate-900">Edit Store Product</h3>
+              <button
+                type="button"
+                onClick={() => setEditingProduct(null)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Product Name</label>
+              <input
+                type="text"
+                required
+                value={editingProduct.name}
+                onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु)</label>
+                <input
+                  type="number"
+                  required
+                  value={editingProduct.price}
+                  onChange={(e) =>
+                    setEditingProduct({ ...editingProduct, price: e.target.value })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Stock Quantity ({editingProduct.unit})
+                </label>
+                <input
+                  type="number"
+                  required
+                  value={editingProduct.stock_quantity}
+                  onChange={(e) =>
+                    setEditingProduct({ ...editingProduct, stock_quantity: e.target.value })
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Origin Location
+              </label>
+              <input
+                type="text"
+                value={editingProduct.origin_location || ""}
+                onChange={(e) =>
+                  setEditingProduct({ ...editingProduct, origin_location: e.target.value })
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Description</label>
+              <textarea
+                rows={3}
+                value={editingProduct.description || ""}
+                onChange={(e) =>
+                  setEditingProduct({ ...editingProduct, description: e.target.value })
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingProduct(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2.5 rounded-xl bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
+              >
+                Save Changes
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
