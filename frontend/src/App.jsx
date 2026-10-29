@@ -23,6 +23,7 @@ import {
   PackageCheck,
   Home,
   Eye,
+  EyeOff,
   Trash2,
   Camera,
   LogIn,
@@ -142,10 +143,19 @@ export default function App() {
   const [selectedDistrict, setSelectedDistrict] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Real Stories & Reviews
+  // Language Toggle ("EN" | "NP")
+  const [lang, setLang] = useState("EN");
+  const tr = (enText, npText) => (lang === "NP" ? npText : enText);
+
+  // Printable 1/4 A4 Slip State (Customer Order or Farmer Sale)
+  const [activeSlip, setActiveSlip] = useState(null);
+
+  // Real Stories & Reviews (with Optional Photo Upload)
   const [stories, setStories] = useState([]);
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyForm, setStoryForm] = useState({ title: "", content: "", rating: 5 });
+  const [storyImageFile, setStoryImageFile] = useState(null);
+  const [storyImagePreview, setStoryImagePreview] = useState(null);
 
   // Farmer's Sales to Admin Ledger
   const [farmerSales, setFarmerSales] = useState([]);
@@ -186,6 +196,8 @@ export default function App() {
     current_password: "",
     new_password: "",
   });
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   // Farmer Wholesale Portal State
   const [mySubmissions, setMySubmissions] = useState([]);
@@ -414,17 +426,26 @@ export default function App() {
   const handleStorySubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/marketplace/stories/", {
-        title: storyForm.title.trim(),
-        content: storyForm.content.trim(),
-        rating: storyForm.rating,
-        story_type: user.role === "FARMER" ? "FARMER_STORY" : "BUYER_REVIEW",
-      });
+      const formData = new FormData();
+      formData.append("title", storyForm.title.trim());
+      formData.append("content", storyForm.content.trim());
+      formData.append("rating", storyForm.rating);
+      formData.append(
+        "story_type",
+        user.role === "FARMER" ? "FARMER_STORY" : "BUYER_REVIEW"
+      );
+      if (storyImageFile instanceof File) {
+        formData.append("image", storyImageFile);
+      }
+
+      await api.post("/marketplace/stories/", formData);
       showToast(
         "Thank you! Your story/review was sent to the Admin and will appear once approved."
       );
       setStoryModalOpen(false);
       setStoryForm({ title: "", content: "", rating: 5 });
+      setStoryImageFile(null);
+      setStoryImagePreview(null);
     } catch {
       showToast("Failed to submit story/review.", "error");
     }
@@ -603,9 +624,22 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
-            <span className="bg-emerald-900/80 px-2 py-0.5 rounded text-[10px] font-semibold text-amber-300">
-              EN / नेपाली
-            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const nextLang = lang === "EN" ? "NP" : "EN";
+                setLang(nextLang);
+                showToast(
+                  nextLang === "NP"
+                    ? "भाषा नेपालीमा परिवर्तन गरियो (Switched to Nepali)"
+                    : "Language switched to English"
+                );
+              }}
+              className="bg-emerald-900/80 hover:bg-emerald-800 px-2.5 py-0.5 rounded text-[10px] font-bold text-amber-300 border border-amber-400/30 transition cursor-pointer"
+              title="Click to switch between English and Nepali"
+            >
+              {lang === "EN" ? "🌐 EN / नेपाली" : "🌐 नेपाली / EN"}
+            </button>
             <span className="flex items-center gap-1 font-medium truncate max-w-[160px] sm:max-w-none">
               <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />{" "}
               {user?.location || "Dhangadhi & Kathmandu Hub"}
@@ -803,24 +837,24 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-2 flex flex-wrap items-center justify-between gap-3">
             <nav className="flex flex-wrap items-center gap-1 sm:gap-2">
               {[
-                { id: "home", label: "Home" },
-                { id: "marketplace", label: "Shop Products" },
-                ...(isFarmer ? [{ id: "sell", label: "Sell Your Harvest" }] : []),
+                { id: "home", label: tr("Home", "गृहपृष्ठ") },
+                { id: "marketplace", label: tr("Shop Products", "कृषि उपज किन्नुहोस्") },
+                ...(isFarmer ? [{ id: "sell", label: tr("Sell Your Harvest", "उत्पादन बेच्नुहोस्") }] : []),
                 ...(isFarmer
-                  ? [{ id: "farmer_sales", label: `Sold to Admin (${farmerSales.length})` }]
+                  ? [{ id: "farmer_sales", label: tr(`Sold to Admin (${farmerSales.length})`, `बिक्री विवरण (${farmerSales.length})`) }]
                   : []),
                 ...(user && !isAdmin
-                  ? [{ id: "orders", label: `My Orders (${myOrders.length})` }]
+                  ? [{ id: "orders", label: tr(`My Orders (${myOrders.length})`, `मेरा अर्डरहरू (${myOrders.length})`) }]
                   : []),
-                { id: "stories", label: "Farmer Stories & Reviews" },
+                { id: "stories", label: tr("Farmer Stories & Reviews", "किसान कथा र समीक्षा") },
                 ...(user && !isAdmin
                   ? [
                       {
                         id: "chat",
                         label:
                           unreadChatCount > 0
-                            ? `Chat with Admin (${unreadChatCount} new)`
-                            : "Chat with Admin",
+                            ? tr(`Chat with Admin (${unreadChatCount} new)`, `एडमिनसँग कुराकानी (${unreadChatCount})`)
+                            : tr("Chat with Admin", "एडमिनसँग कुराकानी"),
                       },
                     ]
                   : []),
@@ -1010,6 +1044,18 @@ export default function App() {
                         <strong>Admin Receipt Note:</strong> {s.admin_notes}
                       </p>
                     )}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400">
+                        Voucher #{s.id}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSlip({ ...s, slipType: "FARMER_SALE" })}
+                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Receipt className="w-3.5 h-3.5" /> View / Print 1/4 A4 Slip
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1365,6 +1411,13 @@ export default function App() {
                           {new Date(o.created_at).toLocaleDateString()}
                         </p>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
+                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Receipt className="w-3.5 h-3.5" /> Receipt
+                      </button>
                       {o.status === "PENDING" && (
                         <button
                           onClick={() => handleCancelOrder(o.id)}
@@ -1462,14 +1515,17 @@ export default function App() {
                     </span>
 
                     <h1 className="text-3xl sm:text-5xl lg:text-[54px] font-black tracking-tight leading-[1.12] text-slate-900">
-                      Fresh From the Farm.
-                      <span className="block text-[#14532D] mt-1">Straight to You.</span>
+                      {tr("Fresh From the Farm.", "खेतबारीबाट सिधै ताजा उपज।")}
+                      <span className="block text-[#14532D] mt-1">
+                        {tr("Straight to You.", "तपाईंको भान्सासम्म।")}
+                      </span>
                     </h1>
 
                     <p className="text-slate-600 text-sm sm:text-lg max-w-xl leading-relaxed">
-                      Discover crisp mountain produce, connect directly with verified growers
-                      across all 7 provinces, and bridge the distance between fertile Himalayan
-                      soil and your dining table.
+                      {tr(
+                        "Discover crisp mountain produce, connect directly with verified growers across all 7 provinces, and bridge the distance between fertile Himalayan soil and your dining table.",
+                        "नेपालका ७ वटै प्रदेशका प्रमाणित किसानहरूबाट उत्पादित ताजा तरकारी, फलफूल र खाद्यान्न सिधै सुपथ मूल्यमा खरिद गर्नुहोस्।"
+                      )}
                     </p>
 
                     <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -2028,6 +2084,17 @@ export default function App() {
                     <p className="text-xs text-slate-600 italic bg-slate-50 p-4 rounded-2xl leading-relaxed">
                       "{st.content}"
                     </p>
+                    {st.image && (
+                      <img
+                        src={
+                          st.image.startsWith("http")
+                            ? st.image
+                            : `${BACKEND_URL}${st.image}`
+                        }
+                        alt={st.title || "Story photo"}
+                        className="w-full h-44 object-cover rounded-2xl border border-slate-200"
+                      />
+                    )}
                   </div>
                 ))}
 
@@ -2125,6 +2192,17 @@ export default function App() {
                         <p className="font-bold text-xs text-slate-800">"{br.title}"</p>
                       )}
                       <p className="text-xs text-slate-600 italic">"{br.content}"</p>
+                      {br.image && (
+                        <img
+                          src={
+                            br.image.startsWith("http")
+                              ? br.image
+                              : `${BACKEND_URL}${br.image}`
+                          }
+                          alt={br.title || "Review photo"}
+                          className="w-full h-36 object-cover rounded-2xl border border-slate-200 mt-2"
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2179,6 +2257,42 @@ export default function App() {
                 <option value={4}>⭐⭐⭐⭐ (4 Stars)</option>
                 <option value={3}>⭐⭐⭐ (3 Stars)</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Upload Farm / Produce Photo (Optional)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setStoryImageFile(file);
+                    setStoryImagePreview(URL.createObjectURL(file));
+                  }
+                }}
+                className="w-full text-xs text-slate-600"
+              />
+              {storyImagePreview && (
+                <div className="relative w-32 h-24 rounded-2xl overflow-hidden border border-slate-200">
+                  <img
+                    src={storyImagePreview}
+                    alt="Story preview"
+                    className="w-full h-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStoryImageFile(null);
+                      setStoryImagePreview(null);
+                    }}
+                    className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
             </div>
             <button
               type="submit"
@@ -2498,33 +2612,61 @@ export default function App() {
               </button>
             </form>
 
-            {/* Restored Change Password Section */}
+            {/* Restored Change Password Section (With Show / Hide Password Toggles) */}
             <form
               onSubmit={handleChangePassword}
               className="pt-4 border-t border-slate-200 space-y-3"
             >
               <h4 className="text-sm font-extrabold text-slate-900">Change Password</h4>
-              <input
-                type="password"
-                required
-                placeholder="Current Password *"
-                value={passwordForm.current_password}
-                onChange={(e) =>
-                  setPasswordForm({ ...passwordForm, current_password: e.target.value })
-                }
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-              <input
-                type="password"
-                required
-                minLength={8}
-                placeholder="New Password (min 8 chars) *"
-                value={passwordForm.new_password}
-                onChange={(e) =>
-                  setPasswordForm({ ...passwordForm, new_password: e.target.value })
-                }
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showCurrentPassword ? "text" : "password"}
+                  required
+                  placeholder="Current Password *"
+                  value={passwordForm.current_password}
+                  onChange={(e) =>
+                    setPasswordForm({ ...passwordForm, current_password: e.target.value })
+                  }
+                  className="w-full pl-3.5 pr-10 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showCurrentPassword ? "Hide password" : "Show password"}
+                >
+                  {showCurrentPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showNewPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  placeholder="New Password (min 8 chars) *"
+                  value={passwordForm.new_password}
+                  onChange={(e) =>
+                    setPasswordForm({ ...passwordForm, new_password: e.target.value })
+                  }
+                  className="w-full pl-3.5 pr-10 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showNewPassword ? "Hide password" : "Show password"}
+                >
+                  {showNewPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
               <button
                 type="submit"
                 className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
@@ -2631,6 +2773,306 @@ export default function App() {
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
+        </div>
+      )}
+
+      {/* 1/4 A4 PRINTABLE & DOWNLOADABLE SLIP MODAL (FARMER VOUCHER & CUSTOMER RECEIPT) */}
+      {activeSlip && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-5 space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5">
+                <Receipt className="w-4 h-4 text-[#14532D]" />
+                {activeSlip.slipType === "FARMER_SALE"
+                  ? "Official Farmer Procurement Slip"
+                  : "Official Customer Order Receipt"}
+              </h4>
+              <button
+                type="button"
+                onClick={() => setActiveSlip(null)}
+                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-xs cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 1/4 A4 Printable Container (105mm x 148.5mm) */}
+            <div
+              id="user-printable-slip"
+              className="bg-[#FCFDFD] p-4 rounded-2xl border-2 border-dashed border-slate-300 text-slate-800 space-y-3 text-[11px]"
+            >
+              <div className="text-center border-b border-slate-200 pb-2 space-y-0.5">
+                <div className="flex items-center justify-center gap-1 font-black text-[#14532D] text-base">
+                  🌱 KrishiMart Nepal
+                </div>
+                <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">
+                  किसान र उपभोक्ता जोड्ने डिजिटल बजार
+                </p>
+                <p className="text-[10px] font-extrabold text-slate-700 mt-1">
+                  {activeSlip.slipType === "FARMER_SALE"
+                    ? `Procurement Voucher #${activeSlip.id}`
+                    : `Order Receipt #${activeSlip.id}`}
+                </p>
+                <p className="text-[9px] text-slate-400">
+                  Date: {new Date(activeSlip.created_at || Date.now()).toLocaleDateString()}
+                </p>
+              </div>
+
+              {activeSlip.slipType === "FARMER_SALE" ? (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Farmer:</span>
+                    <span className="font-bold">
+                      {activeSlip.farmer_name || user?.full_name || "Verified Farmer"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Crop / Category:</span>
+                    <span className="font-bold">
+                      {activeSlip.crop_name} ({activeSlip.category})
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Quantity Sold:</span>
+                    <span className="font-bold">
+                      {activeSlip.quantity} {activeSlip.unit}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Agreed Rate:</span>
+                    <span className="font-bold">
+                      रु {activeSlip.agreed_wholesale_rate} / {activeSlip.unit}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Settlement:</span>
+                    <span className="font-bold text-emerald-700">
+                      {activeSlip.payment_status} ({activeSlip.payment_method})
+                    </span>
+                  </div>
+                  <div className="border-t border-slate-200 pt-1.5 flex justify-between text-xs font-black text-[#14532D]">
+                    <span>Total Payout:</span>
+                    <span>रु {Number(activeSlip.total_amount).toLocaleString()}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Customer:</span>
+                    <span className="font-bold">
+                      {activeSlip.customer_name || user?.full_name || "Verified Buyer"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Delivery Address:</span>
+                    <span className="font-bold text-right max-w-[180px]">
+                      {activeSlip.delivery_address || "Verified Address"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Phone:</span>
+                    <span className="font-bold">
+                      {activeSlip.contact_phone || user?.phone_number || "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Produce:</span>
+                    <span className="font-bold">{activeSlip.product_name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Quantity:</span>
+                    <span className="font-bold">
+                      {activeSlip.quantity} {activeSlip.product_unit || "unit(s)"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Order Status:</span>
+                    <span className="font-bold text-emerald-700">{activeSlip.status}</span>
+                  </div>
+                  <div className="border-t border-slate-200 pt-1.5 flex justify-between text-xs font-black text-[#14532D]">
+                    <span>Total Amount:</span>
+                    <span>रु {Number(activeSlip.total_price).toLocaleString()}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-slate-200 pt-2 text-center text-[9px] text-slate-400 space-y-0.5">
+                <p className="font-bold text-emerald-700">✓ Official KrishiMart Verified Slip</p>
+                <p>1/4 A4 (105mm × 148.5mm) Print Format</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const printContents = document.getElementById("user-printable-slip").innerHTML;
+                  const win = window.open("", "", "width=460,height=620");
+                  win.document.write(`
+                    <html>
+                      <head>
+                        <title>KrishiMart Slip #${activeSlip.id}</title>
+                        <style>
+                          @page { size: 105mm 148.5mm; margin: 6mm; }
+                          body { font-family: sans-serif; font-size: 11px; padding: 10px; margin: 0; color: #1e293b; border: 1.5px dashed #94a3b8; border-radius: 10px; }
+                          .border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 8px; }
+                          .border-t { border-top: 1px solid #e2e8f0; padding-top: 6px; margin-top: 8px; }
+                          .flex { display: flex; justify-content: space-between; margin: 4px 0; }
+                          .text-center { text-align: center; }
+                          .font-bold { font-weight: 700; }
+                          .font-black { font-weight: 900; font-size: 13px; color: #14532D; }
+                        </style>
+                      </head>
+                      <body onload="window.print(); window.close();">
+                        ${printContents}
+                      </body>
+                    </html>
+                  `);
+                  win.document.close();
+                }}
+                className="py-2.5 px-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                🖨️ Print 1/4 A4
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const canvas = document.createElement("canvas");
+                  canvas.width = 420;
+                  canvas.height = 594;
+                  const ctx = canvas.getContext("2d");
+                  ctx.fillStyle = "#ffffff";
+                  ctx.fillRect(0, 0, 420, 594);
+                  ctx.strokeStyle = "#14532D";
+                  ctx.lineWidth = 3;
+                  ctx.strokeRect(12, 12, 396, 570);
+
+                  ctx.fillStyle = "#14532D";
+                  ctx.font = "bold 20px sans-serif";
+                  ctx.textAlign = "center";
+                  ctx.fillText("KrishiMart Nepal", 210, 50);
+
+                  ctx.font = "11px sans-serif";
+                  ctx.fillStyle = "#64748b";
+                  ctx.fillText("किसान र उपभोक्ता जोड्ने डिजिटल बजार", 210, 70);
+
+                  ctx.fillStyle = "#0f172a";
+                  ctx.font = "bold 13px sans-serif";
+                  const slipTitle =
+                    activeSlip.slipType === "FARMER_SALE"
+                      ? `Farmer Procurement Voucher #${activeSlip.id}`
+                      : `Customer Order Receipt #${activeSlip.id}`;
+                  ctx.fillText(slipTitle, 210, 100);
+
+                  ctx.font = "11px sans-serif";
+                  ctx.fillStyle = "#64748b";
+                  ctx.fillText(
+                    `Date: ${new Date(activeSlip.created_at || Date.now()).toLocaleDateString()}`,
+                    210,
+                    120
+                  );
+
+                  ctx.strokeStyle = "#cbd5e1";
+                  ctx.lineWidth = 1;
+                  ctx.beginPath();
+                  ctx.moveTo(28, 136);
+                  ctx.lineTo(392, 136);
+                  ctx.stroke();
+
+                  ctx.textAlign = "left";
+                  ctx.font = "12px sans-serif";
+                  ctx.fillStyle = "#1e293b";
+                  let y = 170;
+
+                  if (activeSlip.slipType === "FARMER_SALE") {
+                    ctx.fillText(
+                      `Farmer: ${activeSlip.farmer_name || user?.full_name || "Verified Farmer"}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(
+                      `Crop: ${activeSlip.crop_name} (${activeSlip.category})`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(
+                      `Quantity Sold: ${activeSlip.quantity} ${activeSlip.unit}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(
+                      `Wholesale Rate: रु ${activeSlip.agreed_wholesale_rate} / ${activeSlip.unit}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(
+                      `Payment: ${activeSlip.payment_status} (${activeSlip.payment_method})`,
+                      32,
+                      y
+                    );
+                    y += 40;
+                    ctx.font = "bold 16px sans-serif";
+                    ctx.fillStyle = "#14532D";
+                    ctx.fillText(
+                      `Total Payout: रु ${Number(activeSlip.total_amount).toLocaleString()}`,
+                      32,
+                      y
+                    );
+                  } else {
+                    ctx.fillText(
+                      `Customer: ${activeSlip.customer_name || user?.full_name || "Verified Buyer"}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(`Produce: ${activeSlip.product_name}`, 32, y);
+                    y += 30;
+                    ctx.fillText(
+                      `Quantity: ${activeSlip.quantity} ${activeSlip.product_unit || "unit(s)"}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(
+                      `Address: ${(activeSlip.delivery_address || "").slice(0, 36)}`,
+                      32,
+                      y
+                    );
+                    y += 30;
+                    ctx.fillText(`Status: ${activeSlip.status}`, 32, y);
+                    y += 40;
+                    ctx.font = "bold 16px sans-serif";
+                    ctx.fillStyle = "#14532D";
+                    ctx.fillText(
+                      `Total Amount: रु ${Number(activeSlip.total_price).toLocaleString()}`,
+                      32,
+                      y
+                    );
+                  }
+
+                  ctx.font = "bold 11px sans-serif";
+                  ctx.fillStyle = "#14532D";
+                  ctx.textAlign = "center";
+                  ctx.fillText("✓ Official KrishiMart Verified Digital Slip", 210, 535);
+                  ctx.font = "10px sans-serif";
+                  ctx.fillStyle = "#94a3b8";
+                  ctx.fillText("1/4 A4 Size (105mm × 148.5mm)", 210, 555);
+
+                  const link = document.createElement("a");
+                  link.download = `KrishiMart_Slip_${activeSlip.id}.png`;
+                  link.href = canvas.toDataURL("image/png");
+                  link.click();
+                }}
+                className="py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                ⬇️ Download PNG
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

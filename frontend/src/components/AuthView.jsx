@@ -1,5 +1,18 @@
 import React, { useState } from "react";
-import { Sprout, Mail, Phone, Lock, User, MapPin, ShieldCheck, ArrowRight, Camera, X } from "lucide-react";
+import {
+  Sprout,
+  Mail,
+  Phone,
+  Lock,
+  User,
+  MapPin,
+  ShieldCheck,
+  ArrowRight,
+  Camera,
+  X,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import api from "../api";
 
 export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel }) {
@@ -7,6 +20,11 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+
+  // Show / Hide Password Toggles
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
 
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarFile, setAvatarFile] = useState(null);
@@ -191,13 +209,25 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
               <input
-                type="password"
+                type={showLoginPassword ? "text" : "password"}
                 required
                 placeholder="Enter your password"
                 value={loginData.password}
                 onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#2D6A4F]"
+                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#2D6A4F]"
               />
+              <button
+                type="button"
+                onClick={() => setShowLoginPassword((prev) => !prev)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                title={showLoginPassword ? "Hide password" : "Show password"}
+              >
+                {showLoginPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
 
@@ -316,29 +346,57 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Password *</label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                placeholder="Min 8 chars"
-                value={registerData.password}
-                onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showRegPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  placeholder="Min 8 chars"
+                  value={registerData.password}
+                  onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
+                  className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegPassword((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showRegPassword ? "Hide password" : "Show password"}
+                >
+                  {showRegPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Confirm *</label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                placeholder="Repeat password"
-                value={registerData.confirm_password}
-                onChange={(e) =>
-                  setRegisterData({ ...registerData, confirm_password: e.target.value })
-                }
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showRegConfirmPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  placeholder="Repeat password"
+                  value={registerData.confirm_password}
+                  onChange={(e) =>
+                    setRegisterData({ ...registerData, confirm_password: e.target.value })
+                  }
+                  className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegConfirmPassword((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showRegConfirmPassword ? "Hide password" : "Show password"}
+                >
+                  {showRegConfirmPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
