@@ -237,6 +237,18 @@ class FarmerPurchaseViewSet(viewsets.ReadOnlyModelViewSet):
             "total_amount": total_amount,
             "total_batches": total_batches,
         })
+    @action(detail=True, methods=["post"])
+    def mark_paid(self, request, pk=None):
+        purchase = self.get_object()
+        purchase.payment_status = "PAID"
+        purchase.save()
+        return Response({"message": "Purchase marked as PAID"})
+
+    @action(detail=True, methods=["post"])
+    def remove(self, request, pk=None):
+        purchase = self.get_object()
+        purchase.delete()
+        return Response({"message": "Purchase deleted"})
 
 
 class OrderViewSet(viewsets.ModelViewSet):

@@ -196,6 +196,26 @@ export default function AdminPanel() {
       showToast(err.response?.data?.error || "Failed to complete purchase.", "error");
     }
   };
+  const handleMarkFarmerPurchasePaid = async (purchaseId) => {
+    try {
+      const res = await api.post(`/marketplace/farmer-purchases/${purchaseId}/mark_paid/`);
+      showToast(res.data?.message || "Farmer payout marked as PAID!");
+      fetchAllAdminData();
+    } catch (err) {
+      showToast(err.response?.data?.error || "Failed to update payment status.", "error");
+    }
+  };
+
+  const handleDeleteFarmerPurchase = async (purchaseId) => {
+    if (!window.confirm("Delete this farmer purchase record permanently?")) return;
+    try {
+      const res = await api.post(`/marketplace/farmer-purchases/${purchaseId}/remove/`);
+      showToast(res.data?.message || "Farmer purchase record deleted.");
+      fetchAllAdminData();
+    } catch (err) {
+      showToast(err.response?.data?.error || "Failed to delete purchase record.", "error");
+    }
+  };
 
   const handleConfirmDecline = async (e) => {
     e.preventDefault();
@@ -1350,9 +1370,27 @@ const handleOrderStatus = async (orderId, status) => {
                     )}
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Payment: {p.payment_method}</span>
-                    <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Payment: {p.payment_method} • {new Date(p.created_at).toLocaleDateString()}</span>
+                    <div className="flex items-center gap-1.5">
+                      {p.payment_status === "PENDING" && (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkFarmerPurchasePaid(p.id)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold transition cursor-pointer shadow-xs"
+                        >
+                          ✓ Mark as Paid
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteFarmerPurchase(p.id)}
+                        className="p-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition cursor-pointer"
+                        title="Delete Purchase"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
