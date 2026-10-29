@@ -60,6 +60,8 @@ export default function AdminPanel() {
 
   // Edit Product Modal state
   const [editingProduct, setEditingProduct] = useState(null);
+  const [receiptOrder, setReceiptOrder] = useState(null);
+  const [receiptDiscount, setReceiptDiscount] = useState(0);
 
   // Add Product state
   const [newProduct, setNewProduct] = useState({
@@ -323,16 +325,376 @@ const handleAddProduct = async (e) => {
     }
   };
 
-  const handleOrderStatus = async (orderId, status) => {
+const handleOrderStatus = async (orderId, status) => {
     try {
-      await api.patch(`/marketplace/orders/${orderId}/`, { status });
+      const res = await api.patch(`/marketplace/orders/${orderId}/`, { status });
       showToast(`Order #${orderId} marked as ${status}.`);
       fetchAllAdminData();
+      if (status === "CONFIRMED") {
+        const targetOrder = orders.find((o) => o.id === orderId) || res.data;
+        setReceiptDiscount(0);
+        setReceiptOrder({ ...targetOrder, status: "CONFIRMED" });
+      }
     } catch {
       showToast("Could not update order status.", "error");
     }
   };
 
+  // Print receipt formatted to exact 1/4 of an A4 page (105mm x 148.5mm) with Discount %
+  const handlePrintQuarterA4 = (order, rawDiscountPercent = 0) => {
+    const subtotal = Number(order.total_price || 0);
+    const discountPct = Math.min(100, Math.max(0, Number(rawDiscountPercent || 0)));
+    const discountAmt = subtotal * (discountPct / 100);
+    const netTotal = (subtotal - discountAmt).toFixed(2);
+
+    const paymentMatch = (order.delivery_address || "").match(/\[(COD|ESEWA|KHALTI)\]/i);
+    const paymentMode = paymentMatch ? paymentMatch[1].toUpperCase() : "COD";
+    const cleanAddress = (order.delivery_address || "").replace(/\s*\[(COD|ESEWA|KHALTI)\]/i, "");
+    const unitRate = (subtotal / Number(order.quantity || 1)).toFixed(2);
+    const dateStr = new Date(order.created_at).toLocaleString("en-NP", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+
+    const printWindow = window.open("", "_blank", "width=800,height=900");
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>KrishiMart Receipt #KM-${order.id}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 8mm;
+            }
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+              font-family: 'Segoe UI', Inter, Arial, sans-serif;
+            }
+            body {
+              background: #ffffff;
+              color: #0f172a;
+            }
+            .quarter-a4-slip {
+              width: 97mm;
+              height: 138mm;
+              border: 1.5px solid #14532d;
+              border-right: 1.5px dashed #64748b;
+              border-bottom: 1.5px dashed #64748b;
+              padding: 4.5mm;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              position: relative;
+            }
+            .cut-note {
+              position: absolute;
+              bottom: -4.5mm;
+              left: 0;
+              font-size: 7pt;
+              color: #64748b;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 1.5px solid #14532d;
+              padding-bottom: 2mm;
+            }
+            .brand {
+              font-size: 13pt;
+              font-weight: 900;
+              color: #14532d;
+              letter-spacing: 0.5px;
+            }
+            .sub {
+              font-size: 7.5pt;
+              color: #475569;
+              margin-top: 1px;
+            }
+            .meta {
+              display: flex;
+              justify-content: space-between;
+              font-size: 8pt;
+              padding: 2mm 0;
+              border-bottom: 1px dashed #cbd5e1;
+            }
+            .badge {
+              background: #dcfce7;
+              color: #14532d;
+              font-weight: 800;
+              padding: 1px 6px;
+              border-radius: 4px;
+              font-size: 7.5pt;
+            }
+            .customer-box {
+              background: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 2.2mm;
+              font-size: 8pt;
+              line-height: 1.4;
+              margin: 1.5mm 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 8.5pt;
+              margin: 1mm 0;
+            }
+            th {
+              text-align: left;
+              border-bottom: 1px solid #0f172a;
+              padding: 1.2mm 0;
+              font-size: 7.5pt;
+              text-transform: uppercase;
+              color: #475569;
+            }
+            td {
+              padding: 2mm 0;
+              border-bottom: 1px dashed #cbd5e1;
+              font-weight: 600;
+            }
+            .summary-rows {
+              font-size: 8pt;
+              padding: 1.5mm 0;
+              line-height: 1.5;
+            }
+            .summary-line {
+              display: flex;
+              justify-content: space-between;
+            }
+            .total-box {
+              background: #14532d;
+              color: #ffffff;
+              padding: 2.2mm 3mm;
+              border-radius: 6px;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 9.5pt;
+              font-weight: 900;
+              margin-top: 1mm;
+            }
+            .footer {
+              border-top: 1px solid #e2e8f0;
+              padding-top: 2mm;
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+              font-size: 7.5pt;
+              color: #475569;
+            }
+            .sig-line {
+              border-top: 1px solid #0f172a;
+              width: 32mm;
+              text-align: center;
+              padding-top: 1mm;
+              font-weight: 700;
+              color: #0f172a;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="quarter-a4-slip">
+            <div>
+              <div class="header">
+                <div class="brand">🌱 KRISHIMART NEPAL</div>
+                <div class="sub">Dhangadhi Hub & Kathmandu Valley • Tel: +977-1-4423456</div>
+                <div class="sub" style="font-weight:700; color:#0f172a; margin-top:2px;">OFFICIAL ORDER DISPATCH RECEIPT</div>
+              </div>
+
+              <div class="meta">
+                <div>
+                  <strong>Receipt:</strong> #KM-ORD-${order.id}<br/>
+                  <strong>Date:</strong> ${dateStr}
+                </div>
+                <div style="text-align:right;">
+                  <span class="badge">${order.status}</span><br/>
+                  <span style="font-size:7.5pt;">Pay: <strong>${paymentMode}</strong></span>
+                </div>
+              </div>
+
+              <div class="customer-box">
+                <div><strong>Customer:</strong> ${order.buyer_name}</div>
+                <div><strong>Phone:</strong> ${order.contact_phone}</div>
+                <div><strong>Address:</strong> ${cleanAddress}</div>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>Produce Item</th>
+                    <th>Qty</th>
+                    <th>Rate</th>
+                    <th style="text-align:right;">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>${order.product_name}</td>
+                    <td>${order.quantity} ${order.product_unit}</td>
+                    <td>रु ${unitRate}</td>
+                    <td style="text-align:right;">रु ${subtotal.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="summary-rows">
+                <div class="summary-line">
+                  <span>Subtotal Amount:</span>
+                  <strong>रु ${subtotal.toFixed(2)}</strong>
+                </div>
+                <div class="summary-line" style="color:#b45309;">
+                  <span>Discount (${discountPct}%):</span>
+                  <strong>- रु ${discountAmt.toFixed(2)}</strong>
+                </div>
+              </div>
+
+              <div class="total-box">
+                <span>TOTAL PAYABLE</span>
+                <span>रु ${Number(netTotal).toLocaleString()}</span>
+              </div>
+            </div>
+
+            <div class="footer">
+              <div>
+                <strong>100% Farm-Fresh Verified</strong><br/>
+                Thank you for shopping at KrishiMart!
+              </div>
+              <div class="sig-line">Authorized Stamp</div>
+            </div>
+            <div class="cut-note">✂️ 1/4 A4 Cut Guide (105mm × 148.5mm)</div>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // Download high-resolution 1/4 A4 PNG Receipt with Discount %
+  const handleDownloadReceiptPNG = (order, rawDiscountPercent = 0) => {
+    const subtotal = Number(order.total_price || 0);
+    const discountPct = Math.min(100, Math.max(0, Number(rawDiscountPercent || 0)));
+    const discountAmt = subtotal * (discountPct / 100);
+    const netTotal = (subtotal - discountAmt).toFixed(2);
+
+    const paymentMatch = (order.delivery_address || "").match(/\[(COD|ESEWA|KHALTI)\]/i);
+    const paymentMode = paymentMatch ? paymentMatch[1].toUpperCase() : "COD";
+    const cleanAddress = (order.delivery_address || "").replace(/\s*\[(COD|ESEWA|KHALTI)\]/i, "");
+    const unitRate = (subtotal / Number(order.quantity || 1)).toFixed(2);
+    const dateStr = new Date(order.created_at).toLocaleDateString("en-NP");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 630;
+    canvas.height = 890;
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#14532d";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+    ctx.fillStyle = "#14532d";
+    ctx.fillRect(16, 16, canvas.width - 32, 115);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 28px Segoe UI, sans-serif";
+    ctx.fillText("KRISHIMART NEPAL", 40, 62);
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "bold 14px Segoe UI, sans-serif";
+    ctx.fillText("OFFICIAL ORDER DISPATCH RECEIPT (1/4 A4)", 40, 90);
+    ctx.fillStyle = "#d1fae5";
+    ctx.font = "13px Segoe UI, sans-serif";
+    ctx.fillText("Dhangadhi Hub & Kathmandu • Helpline: +977-1-4423456", 40, 114);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 16px Segoe UI, sans-serif";
+    ctx.fillText(`Receipt No: #KM-ORD-${order.id}`, 40, 170);
+    ctx.fillText(`Status: ${order.status}`, 410, 170);
+    ctx.font = "14px Segoe UI, sans-serif";
+    ctx.fillStyle = "#475569";
+    ctx.fillText(`Order Date: ${dateStr}`, 40, 196);
+    ctx.fillText(`Payment Mode: ${paymentMode}`, 410, 196);
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(40, 220, canvas.width - 80, 120);
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(40, 220, canvas.width - 80, 120);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 15px Segoe UI, sans-serif";
+    ctx.fillText(`Customer Name: ${order.buyer_name}`, 58, 250);
+    ctx.font = "15px Segoe UI, sans-serif";
+    ctx.fillText(`Contact Phone: ${order.contact_phone}`, 58, 282);
+    ctx.fillText(`Delivery Address: ${cleanAddress.slice(0, 42)}`, 58, 314);
+
+    ctx.fillStyle = "#1e293b";
+    ctx.font = "bold 14px Segoe UI, sans-serif";
+    ctx.fillText("PRODUCE ITEM", 40, 380);
+    ctx.fillText("QTY", 320, 380);
+    ctx.fillText("RATE", 410, 380);
+    ctx.fillText("SUBTOTAL", 500, 380);
+
+    ctx.beginPath();
+    ctx.moveTo(40, 392);
+    ctx.lineTo(canvas.width - 40, 392);
+    ctx.strokeStyle = "#0f172a";
+    ctx.stroke();
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 16px Segoe UI, sans-serif";
+    ctx.fillText(String(order.product_name).slice(0, 25), 40, 428);
+    ctx.font = "15px Segoe UI, sans-serif";
+    ctx.fillText(`${order.quantity} ${order.product_unit}`, 320, 428);
+    ctx.fillText(`Rs. ${unitRate}`, 410, 428);
+    ctx.font = "bold 16px Segoe UI, sans-serif";
+    ctx.fillText(`Rs. ${subtotal.toFixed(2)}`, 500, 428);
+
+    // Subtotal & Discount % Rows
+    ctx.font = "15px Segoe UI, sans-serif";
+    ctx.fillStyle = "#334155";
+    ctx.fillText("Subtotal Amount:", 300, 480);
+    ctx.fillText(`Rs. ${subtotal.toFixed(2)}`, 495, 480);
+
+    ctx.fillStyle = "#b45309";
+    ctx.font = "bold 15px Segoe UI, sans-serif";
+    ctx.fillText(`Discount (${discountPct}%):`, 300, 508);
+    ctx.fillText(`- Rs. ${discountAmt.toFixed(2)}`, 490, 508);
+
+    // Grand Total Bar
+    ctx.fillStyle = "#14532d";
+    ctx.fillRect(40, 530, canvas.width - 80, 58);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 18px Segoe UI, sans-serif";
+    ctx.fillText("TOTAL PAYABLE (AFTER DISCOUNT)", 58, 566);
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "bold 22px Segoe UI, sans-serif";
+    ctx.fillText(`Rs. ${Number(netTotal).toLocaleString()}`, 445, 566);
+
+    ctx.fillStyle = "#475569";
+    ctx.font = "italic 14px Segoe UI, sans-serif";
+    ctx.fillText("100% Nepal Origin Verified • Fresh From the Farm", 40, 645);
+    ctx.font = "bold 14px Segoe UI, sans-serif";
+    ctx.fillStyle = "#0f172a";
+    ctx.fillText("Authorized Signature: _______________________", 260, 790);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "13px Segoe UI, sans-serif";
+    ctx.fillText("Thank you for choosing KrishiMart!", 40, 840);
+
+    const link = document.createElement("a");
+    link.download = `KrishiMart_Receipt_Order_${order.id}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
   const handleDeleteSubmission = async (id, cropName) => {
     try {
       await api.delete(`/marketplace/sell-submissions/${id}/`);
@@ -1317,7 +1679,37 @@ const handleAddProduct = async (e) => {
                     {o.delivery_address}
                   </p>
                 </div>
+                {/* <div className="flex items-center gap-2">
+                  <select
+                    value={o.status}
+                    onChange={(e) => handleOrderStatus(o.id, e.target.value)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold bg-slate-50"
+                  >
+                    <option value="PENDING">PENDING</option>
+                    <option value="CONFIRMED">CONFIRMED</option>
+                    <option value="DELIVERED">DELIVERED</option>
+                    <option value="CANCELLED">CANCELLED</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteOrder(o.id)}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer"
+                    title="Delete Order"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div> */}
                 <div className="flex items-center gap-2">
+                  {(o.status === "CONFIRMED" || o.status === "DELIVERED") && (
+                    <button
+                      type="button"
+                      onClick={() => setReceiptOrder(o)}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                      title="View, Print (1/4 A4) or Download Receipt"
+                    >
+                      <Receipt className="w-3.5 h-3.5" /> Receipt
+                    </button>
+                  )}
                   <select
                     value={o.status}
                     onChange={(e) => handleOrderStatus(o.id, e.target.value)}
@@ -1893,6 +2285,155 @@ const handleAddProduct = async (e) => {
           </form>
         </div>
       )}
+      {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL */}
+      {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL (WITH DISCOUNT %) */}
+      {receiptOrder && (() => {
+        const subtotal = Number(receiptOrder.total_price || 0);
+        const discountPct = Math.min(100, Math.max(0, Number(receiptDiscount || 0)));
+        const discountAmt = subtotal * (discountPct / 100);
+        const finalPayable = (subtotal - discountAmt).toFixed(2);
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3.5 shadow-2xl max-h-[92vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                    1/4 A4 Dispatch Slip (105mm × 148.5mm)
+                  </span>
+                  <h3 className="text-lg font-extrabold text-slate-900">
+                    Order Receipt #KM-ORD-{receiptOrder.id}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReceiptOrder(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Admin Optional Discount Percentage (%) Input */}
+              <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-3 flex items-center justify-between gap-3">
+                <div>
+                  <label className="block text-xs font-extrabold text-amber-950">
+                    Add Discount (%)
+                  </label>
+                  <span className="text-[10px] text-amber-800">
+                    Enter 0–100% (Deduction: रु {discountAmt.toFixed(2)})
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    placeholder="0"
+                    value={receiptDiscount}
+                    onChange={(e) => setReceiptDiscount(e.target.value)}
+                    className="w-20 px-3 py-1.5 rounded-xl border border-amber-300 bg-white text-right font-extrabold text-sm text-slate-900 outline-none focus:border-[#14532D]"
+                  />
+                  <span className="font-extrabold text-sm text-amber-950">%</span>
+                </div>
+              </div>
+
+              {/* Visual 1/4 A4 Slip Preview */}
+              <div className="border-2 border-[#14532D] border-r-dashed border-b-dashed rounded-2xl p-4 bg-[#FCFDFB] space-y-2.5 text-xs">
+                <div className="text-center border-b border-[#14532D] pb-2">
+                  <p className="font-black text-base text-[#14532D]">🌱 KRISHIMART NEPAL</p>
+                  <p className="text-[11px] text-slate-500">
+                    Dhangadhi Hub & Kathmandu Valley • +977-1-4423456
+                  </p>
+                  <span className="inline-block mt-1 px-2.5 py-0.5 rounded bg-emerald-100 text-[#14532D] text-[10px] font-extrabold">
+                    OFFICIAL ORDER RECEIPT • {receiptOrder.status}
+                  </span>
+                </div>
+
+                <div className="flex justify-between text-[11px] text-slate-600 border-b border-dashed border-slate-200 pb-2">
+                  <span>
+                    <strong>Receipt:</strong> #KM-ORD-{receiptOrder.id}
+                  </span>
+                  <span>
+                    <strong>Date:</strong>{" "}
+                    {new Date(receiptOrder.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-0.5">
+                  <p>
+                    <strong>Customer:</strong> {receiptOrder.buyer_name}
+                  </p>
+                  <p>
+                    <strong>Phone:</strong> {receiptOrder.contact_phone}
+                  </p>
+                  <p>
+                    <strong>Delivery Address:</strong> {receiptOrder.delivery_address}
+                  </p>
+                </div>
+
+                <div className="border-t border-b border-slate-200 py-2 flex justify-between items-center">
+                  <div>
+                    <p className="font-extrabold text-sm text-slate-900">
+                      {receiptOrder.product_name}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Quantity: {receiptOrder.quantity} {receiptOrder.product_unit}
+                    </p>
+                  </div>
+                  <span className="font-bold text-sm text-slate-900">
+                    रु {subtotal.toFixed(2)}
+                  </span>
+                </div>
+
+                {/* Subtotal & Discount (%) Breakdown */}
+                <div className="space-y-1 text-xs px-1">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Subtotal Amount:</span>
+                    <strong>रु {subtotal.toFixed(2)}</strong>
+                  </div>
+                  <div className="flex justify-between text-amber-700 font-bold">
+                    <span>Discount ({discountPct}%):</span>
+                    <span>- रु {discountAmt.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <div className="bg-[#14532D] text-white p-3 rounded-xl flex justify-between items-center">
+                  <span className="font-bold">TOTAL PAYABLE</span>
+                  <span className="text-base font-black text-amber-300">
+                    रु {Number(finalPayable).toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="pt-2 flex justify-between items-end text-[10px] text-slate-400">
+                  <span>100% Nepal Origin Verified</span>
+                  <span className="border-t border-slate-400 pt-0.5 text-slate-700 font-bold">
+                    Authorized Stamp
+                  </span>
+                </div>
+              </div>
+
+              {/* Print (1/4 A4) & Download (.PNG) Action Buttons */}
+              <div className="grid grid-cols-2 gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handlePrintQuarterA4(receiptOrder, discountPct)}
+                  className="py-3 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  🖨️ Print 1/4 A4 Slip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadReceiptPNG(receiptOrder, discountPct)}
+                  className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  ⬇️ Download Receipt
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
