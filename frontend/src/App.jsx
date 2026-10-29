@@ -1458,7 +1458,7 @@ export default function App() {
                 <div className="max-w-7xl mx-auto grid lg:grid-cols-12 gap-8 sm:gap-10 items-center">
                   <div className="lg:col-span-7 space-y-5 sm:space-y-6">
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-900/10 text-[#14532D] text-[11px] sm:text-xs font-bold">
-                      🌱 Empowering 12,000+ Local Farmers Across Nepal
+                      🌱 Empowering 100+ Local Farmers Across Nepal
                     </span>
 
                     <h1 className="text-3xl sm:text-5xl lg:text-[54px] font-black tracking-tight leading-[1.12] text-slate-900">
@@ -1510,13 +1510,13 @@ export default function App() {
                       <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
                         <p className="text-base sm:text-xl font-black text-slate-900">0% Cut</p>
                         <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-                          Direct Farm Price
+                          Best Market Price
                         </p>
                       </div>
                       <div className="bg-white/90 border border-slate-200/70 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs">
-                        <p className="text-base sm:text-xl font-black text-slate-900">24 Hr</p>
+                        <p className="text-base sm:text-xl font-black text-slate-900">5:00 Am to 10:00 Pm</p>
                         <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
-                          Valley Delivery
+                           Delivery Service
                         </p>
                       </div>
                     </div>
@@ -1529,9 +1529,9 @@ export default function App() {
                         ✓
                       </div>
                       <div className="text-xs leading-tight">
-                        <p className="font-bold text-slate-800">Ram Thapa</p>
+                        <p className="font-bold text-slate-800">Jasmir Chaudhary</p>
                         <p className="text-[10px] text-slate-500">
-                          Listed 50kg Organic Cauliflower
+                          KrishiMart Admin • Verified Farmer Partner
                         </p>
                       </div>
                     </div>
@@ -1585,7 +1585,7 @@ export default function App() {
                       >
                         <option value="ALL">🌱 All Produce Categories</option>
                         <option value="VEGETABLES">Fresh Vegetables</option>
-                        <option value="FRUITS">Hill & Mountain Fruits</option>
+                        <option value="FRUITS">Fruits</option>
                         <option value="GRAINS">Grains & Cereals</option>
                         <option value="SPICES">Spices & Aromatics</option>
                         <option value="DAIRY">Dairy & Oils</option>
