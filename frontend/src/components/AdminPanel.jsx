@@ -266,13 +266,14 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddProduct = async (e) => {
+const handleAddProduct = async (e) => {
     e.preventDefault();
     try {
       const formData = new FormData();
       Object.entries(newProduct).forEach(([key, val]) => {
         if (val !== null && val !== "") formData.append(key, val);
       });
+      formData.append("is_available", "true");
       await api.post("/marketplace/products/", formData);
       setNewProduct({
         name: "",
@@ -1123,88 +1124,129 @@ export default function AdminPanel() {
       )}
 
       {/* 5. STORE INVENTORY TAB */}
+      {/* 5. STORE INVENTORY TAB */}
       {subTab === "products" && (
         <div className="grid lg:grid-cols-3 gap-6">
           <form
             onSubmit={handleAddProduct}
-            className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3 h-fit"
+            className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3.5 h-fit"
           >
             <h3 className="text-lg font-bold text-slate-900">Add Product to Store</h3>
-            <input
-              type="text"
-              required
-              placeholder="Vegetable / Product Name *"
-              value={newProduct.name}
-              onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-            />
-            <div className="grid grid-cols-2 gap-2">
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Vegetable / Product Name *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Organic Local Cauliflower"
+                value={newProduct.name}
+                onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Select Category *
+              </label>
               <select
                 value={newProduct.category}
                 onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm bg-white font-semibold text-slate-800"
               >
-                <option value="VEGETABLES">Fresh Vegetables</option>
-                <option value="FRUITS">Fresh Fruits</option>
-                <option value="GRAINS">Grains & Pulses</option>
-                <option value="SPICES">Herbs & Spices</option>
-                <option value="DAIRY">Organic & Dairy</option>
-              </select>
-              <select
-                value={newProduct.unit}
-                onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white"
-              >
-                <option value="kg">per kg</option>
-                <option value="bundle">per bundle</option>
-                <option value="crate">per crate</option>
-                <option value="quintal">per quintal</option>
+                <option value="VEGETABLES">🥬 Fresh Vegetables</option>
+                <option value="FRUITS">🍎 Hill & Mountain Fruits</option>
+                <option value="GRAINS">🌾 Grains, Pulses & Cereals</option>
+                <option value="SPICES">🌶️ Spices, Herbs & Aromatics</option>
+                <option value="DAIRY">🍯 Organic Dairy, Oils & Honey</option>
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु) *</label>
+                <input
+                  type="number"
+                  required
+                  placeholder="e.g. 65"
+                  value={newProduct.price}
+                  onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Stock Qty *</label>
+                <input
+                  type="number"
+                  required
+                  placeholder="e.g. 50"
+                  value={newProduct.stock_quantity}
+                  onChange={(e) => setNewProduct({ ...newProduct, stock_quantity: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Unit *</label>
+                <select
+                  value={newProduct.unit}
+                  onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-sm bg-white font-medium"
+                >
+                  <option value="kg">per kg</option>
+                  <option value="g">per g</option>
+                  <option value="bundle">per bundle</option>
+                  <option value="crate">per crate</option>
+                  <option value="quintal">per quintal</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Origin Farm Location
+              </label>
               <input
-                type="number"
-                required
-                placeholder="Price (रु) *"
-                value={newProduct.price}
-                onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
-                className="px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-              <input
-                type="number"
-                required
-                placeholder="Stock Qty *"
-                value={newProduct.stock_quantity}
-                onChange={(e) => setNewProduct({ ...newProduct, stock_quantity: e.target.value })}
-                className="px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                type="text"
+                placeholder="e.g. Dhangadhi, Kailali"
+                value={newProduct.origin_location}
+                onChange={(e) => setNewProduct({ ...newProduct, origin_location: e.target.value })}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
             </div>
-            <input
-              type="text"
-              placeholder="Origin Farm Location (e.g. Dhangadhi, Kailali)"
-              value={newProduct.origin_location}
-              onChange={(e) => setNewProduct({ ...newProduct, origin_location: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-            />
-            <textarea
-              rows={3}
-              required
-              placeholder="Product freshness & description *"
-              value={newProduct.description}
-              onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-            />
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setNewProduct({ ...newProduct, image: e.target.files[0] })}
-              className="w-full text-xs text-slate-500"
-            />
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Product Description *
+              </label>
+              <textarea
+                rows={3}
+                required
+                placeholder="Product freshness, harvest details & description..."
+                value={newProduct.description}
+                onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Product Photo (Optional)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setNewProduct({ ...newProduct, image: e.target.files[0] })}
+                className="w-full text-xs text-slate-500"
+              />
+            </div>
+
             <button
               type="submit"
               className="w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-semibold rounded-xl text-sm cursor-pointer"
             >
-              Publish Product
+              Publish Product to Store
             </button>
           </form>
 
@@ -1228,7 +1270,7 @@ export default function AdminPanel() {
                   <button
                     onClick={() => setEditingProduct({ ...p })}
                     className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl cursor-pointer"
-                    title="Edit Price or Stock"
+                    title="Edit Category, Price or Stock"
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
@@ -1716,24 +1758,26 @@ export default function AdminPanel() {
       )}
 
       {/* EDIT STORE PRODUCT MODAL */}
+      {/* EDIT STORE PRODUCT MODAL */}
       {editingProduct && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <form
             onSubmit={handleSaveProductEdit}
-            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3.5 shadow-2xl"
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3.5 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-extrabold text-slate-900">Edit Store Product</h3>
               <button
                 type="button"
                 onClick={() => setEditingProduct(null)}
-                className="p-1 text-slate-400 hover:text-slate-700"
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Product Name</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Product Name *</label>
               <input
                 type="text"
                 required
@@ -1742,9 +1786,30 @@ export default function AdminPanel() {
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+
+            {/* Category Selector inside Edit Store Product */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Select Category *
+              </label>
+              <select
+                value={editingProduct.category || "VEGETABLES"}
+                onChange={(e) =>
+                  setEditingProduct({ ...editingProduct, category: e.target.value })
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm bg-white font-semibold text-slate-800"
+              >
+                <option value="VEGETABLES">🥬 Fresh Vegetables</option>
+                <option value="FRUITS">🍎 Hill & Mountain Fruits</option>
+                <option value="GRAINS">🌾 Grains, Pulses & Cereals</option>
+                <option value="SPICES">🌶️ Spices, Herbs & Aromatics</option>
+                <option value="DAIRY">🍯 Organic Dairy, Oils & Honey</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु) *</label>
                 <input
                   type="number"
                   required
@@ -1752,13 +1817,11 @@ export default function AdminPanel() {
                   onChange={(e) =>
                     setEditingProduct({ ...editingProduct, price: e.target.value })
                   }
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Stock Quantity ({editingProduct.unit})
-                </label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Stock Qty *</label>
                 <input
                   type="number"
                   required
@@ -1766,10 +1829,25 @@ export default function AdminPanel() {
                   onChange={(e) =>
                     setEditingProduct({ ...editingProduct, stock_quantity: e.target.value })
                   }
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Unit *</label>
+                <select
+                  value={editingProduct.unit || "kg"}
+                  onChange={(e) => setEditingProduct({ ...editingProduct, unit: e.target.value })}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-sm bg-white font-medium"
+                >
+                  <option value="kg">per kg</option>
+                  <option value="g">per g</option>
+                  <option value="bundle">per bundle</option>
+                  <option value="crate">per crate</option>
+                  <option value="quintal">per quintal</option>
+                </select>
+              </div>
             </div>
+
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Origin Location
@@ -1783,10 +1861,12 @@ export default function AdminPanel() {
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Description</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Description *</label>
               <textarea
                 rows={3}
+                required
                 value={editingProduct.description || ""}
                 onChange={(e) =>
                   setEditingProduct({ ...editingProduct, description: e.target.value })
@@ -1794,6 +1874,7 @@ export default function AdminPanel() {
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
             </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
@@ -1804,7 +1885,7 @@ export default function AdminPanel() {
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2.5 rounded-xl bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold cursor-pointer"
               >
                 Save Changes
               </button>

@@ -249,9 +249,9 @@ export default function App() {
     fetchCurrentUser();
   }, []);
 
-  const isVerifiedOrAdmin =
-    user && (user.is_admin_verified || user.is_staff || user.role === "ADMIN");
-  const isFarmer = user && (user.role === "FARMER" || user.role === "ADMIN" || user.is_staff);
+  const isAdmin = Boolean(user && (user.is_staff || user.role === "ADMIN"));
+  const isVerifiedOrAdmin = Boolean(user && (user.is_admin_verified || isAdmin));
+  const isFarmer = Boolean(user && user.role === "FARMER" && !isAdmin);
 
   const loadPublicData = async () => {
     try {
@@ -679,20 +679,22 @@ export default function App() {
 
             {user ? (
               <>
-                <button
-                  onClick={() => setChatDrawerOpen(true)}
-                  className="relative p-2 sm:p-2.5 rounded-full bg-slate-100 hover:bg-emerald-50 text-slate-700 cursor-pointer"
-                  title="Live Chat with Admin"
-                >
-                  <MessageCircle className="w-4 h-4 text-[#14532D]" />
-                  {unreadChatCount > 0 ? (
-                    <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[10px] font-extrabold">
-                      {unreadChatCount}
-                    </span>
-                  ) : (
-                    <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
-                  )}
-                </button>
+                {!isAdmin && (
+                  <button
+                    onClick={() => setChatDrawerOpen(true)}
+                    className="relative p-2 sm:p-2.5 rounded-full bg-slate-100 hover:bg-emerald-50 text-slate-700 cursor-pointer"
+                    title="Live Chat with Admin"
+                  >
+                    <MessageCircle className="w-4 h-4 text-[#14532D]" />
+                    {unreadChatCount > 0 ? (
+                      <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[10px] font-extrabold">
+                        {unreadChatCount}
+                      </span>
+                    ) : (
+                      <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                    )}
+                  </button>
+                )}
 
                 {/* User Avatar Badge with Real Profile Picture */}
                 <button
@@ -807,9 +809,11 @@ export default function App() {
                 ...(isFarmer
                   ? [{ id: "farmer_sales", label: `Sold to Admin (${farmerSales.length})` }]
                   : []),
-                ...(user ? [{ id: "orders", label: `My Orders (${myOrders.length})` }] : []),
+                ...(user && !isAdmin
+                  ? [{ id: "orders", label: `My Orders (${myOrders.length})` }]
+                  : []),
                 { id: "stories", label: "Farmer Stories & Reviews" },
-                ...(user
+                ...(user && !isAdmin
                   ? [
                       {
                         id: "chat",
@@ -1849,13 +1853,15 @@ export default function App() {
                             >
                               <Eye className="w-4 h-4" />
                             </button>
-                            <button
-                              onClick={() => requireAuth(() => setChatDrawerOpen(true))}
-                              className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
-                              title="Ask Admin about this batch"
-                            >
-                              <MessageCircle className="w-4 h-4" />
-                            </button>
+                            {!isAdmin && (
+                              <button
+                                onClick={() => requireAuth(() => setChatDrawerOpen(true))}
+                                className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
+                                title="Ask Admin about this batch"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );

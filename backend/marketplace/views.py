@@ -84,7 +84,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         if not Product.objects.exists():
             for item in INITIAL_NEPAL_PRODUCTS:
                 Product.objects.create(**item)
-        return Product.objects.filter(is_available=True)
+        # Ensure any previously added products with is_available=False become visible
+        Product.objects.filter(is_available=False).update(is_available=True)
+        return Product.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(is_available=True)
 
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
