@@ -616,7 +616,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3 sm:gap-4">
             <span className="flex items-center gap-1 font-medium">
-              <Phone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" /> +977-1-4423456
+              <Phone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400" /> +977-9703931744
             </span>
             <span className="hidden md:inline-flex items-center gap-1.5 text-emerald-200">
               • <TrendingUp className="w-3.5 h-3.5 text-amber-400" /> Kalimati Mandi Live Rate:
@@ -642,7 +642,7 @@ export default function App() {
             </button>
             <span className="flex items-center gap-1 font-medium truncate max-w-[160px] sm:max-w-none">
               <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />{" "}
-              {user?.location || "Dhangadhi & Kathmandu Hub"}
+              {user?.location || "Dhangadhi  Hub"}
             </span>
           </div>
         </div>
@@ -1523,8 +1523,8 @@ export default function App() {
 
                     <p className="text-slate-600 text-sm sm:text-lg max-w-xl leading-relaxed">
                       {tr(
-                        "Discover crisp mountain produce, connect directly with verified growers across all 7 provinces, and bridge the distance between fertile Himalayan soil and your dining table.",
-                        "नेपालका ७ वटै प्रदेशका प्रमाणित किसानहरूबाट उत्पादित ताजा तरकारी, फलफूल र खाद्यान्न सिधै सुपथ मूल्यमा खरिद गर्नुहोस्।"
+                        "Discover the freshness of Nepal’s farms. Shop fresh vegetables, fruits, and quality grains directly from trusted farmers across the country at fair and affordable prices. Bringing the richness of fertile fields straight to your table.",
+                        "नेपालभरिका विश्वसनीय किसानहरूबाट उत्पादित ताजा तरकारी, फलफूल तथा गुणस्तरीय खाद्यान्न अब सिधै तपाईंको घरसम्म। उचित मूल्यमा ताजा कृषि उपज खरिद गर्नुहोस् र किसानसँग प्रत्यक्ष जोडिनुहोस्।"
                       )}
                     </p>
 
@@ -3232,10 +3232,10 @@ export default function App() {
           <div>
             <h4 className="font-bold text-slate-900 mb-3">Central Hub Contact</h4>
             <ul className="space-y-2">
-              <li>📍 Dhangadhi Hub & Kathmandu Valley</li>
-              <li>📞 +977-1-4423456 / 9840000000</li>
+              <li>📍 Dhangadhi Hub </li>
+              <li>📞 +977-9703931744 / 9766528500</li>
               <li>✉️ support@krishimart.com.np</li>
-              <li>🕒 6:00 AM – 8:00 PM NPT Daily</li>
+              <li>🕒 6:00 AM – 10:00 PM NPT Daily</li>
             </ul>
           </div>
         </div>
