@@ -149,10 +149,16 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # --- EMAIL CONFIGURATION (Brevo Certified Relay — 100% Primary Inbox Delivery) ---
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp-relay.brevo.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "c0a681001@smtp-brevo.com"
-EMAIL_HOST_PASSWORD = "xsmtpsib-7c4734201a17149dc9373fb3b941e6cdd1411e18ddf0d1294461106531ce1441-B0RniofPtytYvbxh"
-DEFAULT_FROM_EMAIL = "KrishiMart Nepal <krishimart.support@gmail.com>"
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = config("EMAIL_HOST", default="smtp-relay.brevo.com")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="c0a681001@smtp-brevo.com")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = config(
+    "DEFAULT_FROM_EMAIL",
+    default="KrishiMart Nepal <krishimart.support@gmail.com>",
+)
