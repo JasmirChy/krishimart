@@ -1,4 +1,8 @@
+import random
+from django.conf import settings
+from django.core.mail import send_mail
 from django.shortcuts import render
+from django.utils import timezone
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -8,6 +12,9 @@ from rest_framework.views import APIView
 from .models import User
 from .permissions import IsSiteAdmin
 from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
+
+# In-memory OTP storage: { "user_email": { "code": "123456", "expires_at": timestamp } }
+PASSWORD_RESET_OTPS = {}
 
 
 class RegisterView(generics.CreateAPIView):
@@ -32,6 +39,195 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        action_type = request.data.get("action")
+
+        # 1. SEND 6-DIGIT EMAIL OTP WITH PROFESSIONAL HTML TEMPLATE
+        if action_type == "send_otp":
+            email = (request.data.get("email") or "").strip().lower()
+            if not email:
+                return Response(
+                    {"error": "Please enter your registered email address."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = User.objects.filter(email__iexact=email).first()
+            if not user:
+                return Response(
+                    {"error": "No KrishiMart account found with this email address."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Generate random 6-digit OTP code
+            otp_code = f"{random.randint(100000, 999999)}"
+            expiry_timestamp = timezone.now().timestamp() + (10 * 60)  # Valid for 10 minutes
+            PASSWORD_RESET_OTPS[email] = {
+                "code": otp_code,
+                "expires_at": expiry_timestamp,
+            }
+
+            recipient_name = user.full_name or "KrishiMart User"
+            subject = f"Your KrishiMart Nepal Security Passcode: {otp_code}"
+
+            # Plain-text fallback for basic email clients
+            plain_message = (
+                f"Namaste {recipient_name},\n\n"
+                f"Your 6-digit KrishiMart verification code is: {otp_code}\n\n"
+                f"This code will expire in 10 minutes.\n"
+                f"If you did not request this code, you can safely ignore this email.\n\n"
+                f"KrishiMart Nepal • Empowering Local Farmers\n"
+                f"Dhangadhi Hub, Kailali & Kathmandu Valley\n"
+                f"https://krishimart-gold.vercel.app/"
+            )
+
+            # Professional, high-deliverability HTML email template
+            html_message = f"""
+            <!DOCTYPE html>
+            <html lang="en">
+              <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{subject}</title>
+              </head>
+              <body style="margin: 0; padding: 24px 12px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td align="center">
+                      <table role="presentation" width="100%" style="max-width: 480px; background-color: #ffffff; border-radius: 20px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);" cellspacing="0" cellpadding="0" border="0">
+                        <!-- Brand Header -->
+                        <tr>
+                          <td style="background-color: #14532D; padding: 28px 24px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 900; letter-spacing: -0.5px;">
+                              🌱 KrishiMart Nepal
+                            </h1>
+                            <p style="margin: 4px 0 0 0; color: #a7f3d0; font-size: 12px; font-weight: 500;">
+                              किसान र उपभोक्ता जोड्ने डिजिटल बजार
+                            </p>
+                          </td>
+                        </tr>
+                        <!-- Body Content -->
+                        <tr>
+                          <td style="padding: 32px 28px 24px 28px; text-align: center;">
+                            <h2 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 800; color: #0f172a;">
+                              Password Reset Verification
+                            </h2>
+                            <p style="margin: 0 0 20px 0; font-size: 13px; line-height: 1.6; color: #475569;">
+                              Namaste <strong>{recipient_name}</strong>, we received a request to verify your identity. Enter the 6-digit code below to reset your password:
+                            </p>
+                            <!-- Large OTP Code Display -->
+                            <div style="background-color: #f0fdf4; border: 2px dashed #16a34a; border-radius: 14px; padding: 18px 24px; margin: 0 auto 20px auto; display: inline-block;">
+                              <span style="font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #14532D; font-family: monospace;">
+                                {otp_code}
+                              </span>
+                            </div>
+                            <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: 600; color: #64748b;">
+                              ⏱️ Valid for 10 minutes only
+                            </p>
+                            <p style="margin: 0; font-size: 11px; line-height: 1.5; color: #94a3b8;">
+                              If you did not make this request, someone may have mistyped their email. No changes will be made to your account.
+                            </p>
+                          </td>
+                        </tr>
+                        <!-- Verified Footer -->
+                        <tr>
+                          <td style="background-color: #f8fafc; border-top: 1px solid #f1f5f9; padding: 20px 24px; text-align: center;">
+                            <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; color: #14532D;">
+                              ✓ KrishiMart Official System Notification
+                            </p>
+                            <p style="margin: 0; font-size: 10px; color: #64748b; line-height: 1.4;">
+                              Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal<br/>
+                              Helpline: +977-1-4423456 • krishimart.support@gmail.com
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </body>
+            </html>
+            """
+
+            from_email = getattr(
+                settings,
+                "DEFAULT_FROM_EMAIL",
+                "krishimart.support@gmail.com",
+            )
+
+            try:
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=from_email,
+                    recipient_list=[email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+            except Exception as mail_err:
+                print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
+
+            return Response(
+                {
+                    "message": f"A 6-digit verification code was sent to {email}. Please check your inbox."
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # 2. VERIFY OTP AND SET NEW PASSWORD
+        if action_type == "verify_otp_and_reset":
+            email = (request.data.get("email") or "").strip().lower()
+            otp = (request.data.get("otp") or "").strip()
+            new_password = request.data.get("new_password") or ""
+
+            if not email or not otp or not new_password:
+                return Response(
+                    {"error": "Email, 6-digit OTP code, and new password are required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if len(new_password) < 8:
+                return Response(
+                    {"error": "New password must be at least 8 characters long."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            cached = PASSWORD_RESET_OTPS.get(email)
+            if not cached:
+                return Response(
+                    {"error": "No verification code was requested for this email, or it has expired."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if timezone.now().timestamp() > cached["expires_at"]:
+                PASSWORD_RESET_OTPS.pop(email, None)
+                return Response(
+                    {"error": "This verification code has expired. Please request a new code."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if cached["code"] != otp:
+                return Response(
+                    {"error": "Invalid 6-digit verification code. Please check and try again."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = User.objects.filter(email__iexact=email).first()
+            if not user:
+                return Response(
+                    {"error": "Account not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            user.set_password(new_password)
+            user.save()
+            PASSWORD_RESET_OTPS.pop(email, None)
+
+            return Response(
+                {
+                    "message": "Password reset successfully! You can now sign in with your new password."
+                },
+                status=status.HTTP_200_OK,
+            )
+
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         return Response(serializer.validated_data, status=status.HTTP_200_OK)

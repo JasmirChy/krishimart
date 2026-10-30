@@ -12,12 +12,17 @@ import {
   X,
   Eye,
   EyeOff,
+  KeyRound,
+  CheckCircle2,
 } from "lucide-react";
 import api from "../api";
 
 export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel }) {
   const [isLogin, setIsLogin] = useState(initialTab === "login");
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isResending, setIsResending] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -25,11 +30,19 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarFile, setAvatarFile] = useState(null);
 
   const [loginData, setLoginData] = useState({ identifier: "", password: "" });
+  const [resetData, setResetData] = useState({
+    email: "",
+    otp: "",
+    new_password: "",
+    confirm_password: "",
+  });
   const [registerData, setRegisterData] = useState({
     full_name: "",
     email: "",
@@ -63,6 +76,91 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
         data?.non_field_errors?.[0] ||
           data?.detail ||
           "Invalid Email/Phone or Password. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 1: Send 6-Digit Code to User's Email
+  const handleSendOtp = async (e, isResendAction = false) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setError("");
+    setSuccessMsg("");
+
+    if (!resetData.email.trim()) {
+      setError("Please enter your registered email address.");
+      return;
+    }
+
+    if (isResendAction) {
+      setIsResending(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const res = await api.post("/accounts/login/", {
+        action: "send_otp",
+        email: resetData.email.trim(),
+      });
+      setSuccessMsg(
+        res.data?.message ||
+          `A 6-digit verification code was sent to ${resetData.email}.`
+      );
+      setOtpSent(true);
+    } catch (err) {
+      setError(
+        err.response?.data?.error ||
+          "Could not send code. Please ensure this email is registered with KrishiMart."
+      );
+    } finally {
+      setLoading(false);
+      setIsResending(false);
+    }
+  };
+
+  // STEP 2: Verify Code and Update Password
+  const handleVerifyOtpAndReset = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMsg("");
+
+    if (resetData.new_password !== resetData.confirm_password) {
+      setError("New passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.post("/accounts/login/", {
+        action: "verify_otp_and_reset",
+        email: resetData.email.trim(),
+        otp: resetData.otp.trim(),
+        new_password: resetData.new_password,
+      });
+
+      setSuccessMsg(
+        res.data?.message ||
+          "Password reset successfully! Please sign in with your new password."
+      );
+      setIsForgotPassword(false);
+      setOtpSent(false);
+      setIsLogin(true);
+      setLoginData({
+        identifier: resetData.email.trim(),
+        password: "",
+      });
+      setResetData({
+        email: "",
+        otp: "",
+        new_password: "",
+        confirm_password: "",
+      });
+    } catch (err) {
+      setError(
+        err.response?.data?.error ||
+          "Invalid or expired verification code. Please check and try again."
       );
     } finally {
       setLoading(false);
@@ -133,36 +231,42 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
         </button>
       )}
 
-      <div className="flex bg-emerald-950/5 p-1 rounded-2xl mb-6">
-        <button
-          type="button"
-          onClick={() => {
-            setIsLogin(true);
-            setError("");
-          }}
-          className={`flex-1 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition cursor-pointer ${
-            isLogin
-              ? "bg-[#1B4332] text-white shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
-          }`}
-        >
-          Sign In
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsLogin(false);
-            setError("");
-          }}
-          className={`flex-1 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition cursor-pointer ${
-            !isLogin
-              ? "bg-[#1B4332] text-white shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
-          }`}
-        >
-          Create Account
-        </button>
-      </div>
+      {!isForgotPassword && (
+        <div className="flex bg-emerald-950/5 p-1 rounded-2xl mb-6">
+          <button
+            type="button"
+            onClick={() => {
+              setIsLogin(true);
+              setIsForgotPassword(false);
+              setOtpSent(false);
+              setError("");
+            }}
+            className={`flex-1 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition cursor-pointer ${
+              isLogin
+                ? "bg-[#1B4332] text-white shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsLogin(false);
+              setIsForgotPassword(false);
+              setOtpSent(false);
+              setError("");
+            }}
+            className={`flex-1 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition cursor-pointer ${
+              !isLogin
+                ? "bg-[#1B4332] text-white shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            Create Account
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm font-medium">
@@ -176,7 +280,185 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
         </div>
       )}
 
-      {isLogin ? (
+      {isForgotPassword ? (
+        !otpSent ? (
+          /* STEP 1: Enter Email & Request 6-Digit Code */
+          <form onSubmit={(e) => handleSendOtp(e, false)} className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                  <KeyRound className="w-5 h-5 text-[#1B4332]" />
+                  Forgot Password?
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Enter your registered email address to receive a 6-digit verification code.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsForgotPassword(false);
+                  setOtpSent(false);
+                  setError("");
+                }}
+                className="text-xs font-bold text-[#1B4332] hover:underline cursor-pointer"
+              >
+                ← Back
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                Registered Email Address *
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. ram@gmail.com"
+                  value={resetData.email}
+                  onChange={(e) => setResetData({ ...resetData, email: e.target.value })}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#2D6A4F]"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-4 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-semibold rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer text-sm"
+            >
+              {loading ? "Sending Code..." : "Send Verification Code"}
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </form>
+        ) : (
+          /* STEP 2: Enter 6-Digit Code & Set New Password */
+          <form onSubmit={handleVerifyOtpAndReset} className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-700" />
+                  Enter Verification Code
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Code sent to <strong>{resetData.email}</strong>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOtpSent(false);
+                  setError("");
+                }}
+                className="text-xs font-bold text-[#1B4332] hover:underline cursor-pointer"
+              >
+                Change Email
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                6-Digit Verification Code *
+              </label>
+              <input
+                type="text"
+                required
+                maxLength={6}
+                placeholder="e.g. 482915"
+                value={resetData.otp}
+                onChange={(e) =>
+                  setResetData({ ...resetData, otp: e.target.value.replace(/\D/g, "") })
+                }
+                className="w-full px-4 py-2.5 rounded-xl border-2 border-emerald-600/40 text-center tracking-widest text-lg font-black text-slate-900 outline-none focus:border-[#1B4332]"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  New Password *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    placeholder="Min 8 chars"
+                    value={resetData.new_password}
+                    onChange={(e) => setResetData({ ...resetData, new_password: e.target.value })}
+                    className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#2D6A4F]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title={showResetPassword ? "Hide password" : "Show password"}
+                  >
+                    {showResetPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Confirm Password *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetConfirm ? "text" : "password"}
+                    required
+                    minLength={8}
+                    placeholder="Repeat password"
+                    value={resetData.confirm_password}
+                    onChange={(e) =>
+                      setResetData({ ...resetData, confirm_password: e.target.value })
+                    }
+                    className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#2D6A4F]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetConfirm((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title={showResetConfirm ? "Hide password" : "Show password"}
+                  >
+                    {showResetConfirm ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || isResending}
+              className="w-full py-3 px-4 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-semibold rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer text-sm"
+            >
+              {loading ? "Verifying..." : "Verify Code & Change Password"}
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <p className="text-center text-xs text-slate-400 pt-1">
+              Didn't receive the email?{" "}
+              <button
+                type="button"
+                disabled={isResending || loading}
+                onClick={(e) => handleSendOtp(e, true)}
+                className="font-bold text-[#1B4332] hover:underline cursor-pointer disabled:text-slate-400"
+              >
+                {isResending ? "Resending..." : "Resend Code"}
+              </button>
+            </p>
+          </form>
+        )
+      ) : isLogin ? (
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Welcome Back</h2>
@@ -203,9 +485,23 @@ export default function AuthView({ onAuthSuccess, initialTab = "login", onCancel
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-              Password *
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                Password *
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsForgotPassword(true);
+                  setOtpSent(false);
+                  setError("");
+                  setSuccessMsg("");
+                }}
+                className="text-xs font-bold text-[#1B4332] hover:underline cursor-pointer"
+              >
+                Forgot Password?
+              </button>
+            </div>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
               <input
