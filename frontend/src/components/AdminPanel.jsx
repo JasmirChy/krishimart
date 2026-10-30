@@ -1482,6 +1482,18 @@ const handleOrderStatus = async (orderId, status) => {
                       "{st.content}"
                     </p>
 
+                    {st.image && (
+                      <img
+                        src={
+                          st.image.startsWith("http")
+                            ? st.image
+                            : `${BACKEND_URL}${st.image}`
+                        }
+                        alt={st.title || "Story or review photo"}
+                        className="w-full h-44 object-cover rounded-2xl border border-slate-200"
+                      />
+                    )}
+
                     {st.rating && (
                       <div className="flex items-center gap-1 text-amber-400">
                         {Array.from({ length: st.rating }).map((_, i) => (

@@ -1587,7 +1587,7 @@ export default function App() {
                       <div className="text-xs leading-tight">
                         <p className="font-bold text-slate-800">Jasmir Chaudhary</p>
                         <p className="text-[10px] text-slate-500">
-                          KrishiMart Admin • Verified Farmer Partner
+                          KrishiMart Admin • Official Farmer Partner
                         </p>
                       </div>
                     </div>
