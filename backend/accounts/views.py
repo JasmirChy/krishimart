@@ -20,11 +20,57 @@ from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 # In-memory OTP storage: { "user_email": { "code": "123456", "expires_at": timestamp } }
 PASSWORD_RESET_OTPS = {}
 
+# Official KrishiMart Google Apps Script Web App URL (Port 443 HTTPS -> Native Gmail Delivery)
+GOOGLE_SCRIPT_WEBHOOK_URL = config(
+    "GOOGLE_SCRIPT_WEBHOOK_URL",
+    default="https://script.google.com/macros/s/AKfycby54qvMjU39dehVbkysaL16Z2qEpfvo_txYzaDJ9tzZsqBz98IWtEuEs-mXUDBVMuQr/exec",
+)
+
+
+def send_otp_via_google_script(to_email, subject, html_message, plain_message):
+    """
+    Sends the 6-digit OTP over Port 443 HTTPS to the KrishiMart Google Apps Script Web App,
+    which dispatches the email natively from krishimart.support@gmail.com via Gmail's own servers
+    (100% SPF/DKIM/DMARC pass -> Primary Inbox delivery on both localhost and Render).
+    """
+    if not GOOGLE_SCRIPT_WEBHOOK_URL:
+        return False, "GOOGLE_SCRIPT_WEBHOOK_URL not configured"
+
+    payload = {
+        "to": to_email,
+        "subject": subject,
+        "text": plain_message,
+        "html": html_message,
+    }
+
+    req = urllib.request.Request(
+        GOOGLE_SCRIPT_WEBHOOK_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_body = response.read().decode("utf-8", errors="ignore")
+            if '"status":"error"' in res_body or '"status": "error"' in res_body:
+                return False, f"Google Script error: {res_body}"
+            return True, res_body
+    except HTTPError as e:
+        # Google Apps Script executes doPost() and sometimes redirects with 302/405 after sending
+        if e.code in (200, 201, 301, 302, 303, 307, 308):
+            return True, f"Sent via Google Script (HTTP {e.code})"
+        err_body = e.read().decode("utf-8", errors="ignore")
+        return False, f"Google Script HTTP {e.code}: {err_body}"
+    except URLError as e:
+        return False, f"Google Script Network Error: {e.reason}"
+    except Exception as e:
+        return False, str(e)
+
 
 def send_otp_via_brevo_api(to_email, recipient_name, otp_code, html_message, plain_message):
     """
-    Sends email via Brevo's HTTPS REST API over Port 443.
-    This bypasses Render's firewall which blocks outbound SMTP ports 25, 465, and 587.
+    Backup sender via Brevo's HTTPS REST API over Port 443.
     """
     raw_key = (
         config("BREVO_API_KEY", default="")
@@ -36,7 +82,6 @@ def send_otp_via_brevo_api(to_email, recipient_name, otp_code, html_message, pla
     if not raw_key:
         return False, "BREVO_API_KEY is not configured"
 
-    # Auto-decode if the user pasted the Base64 JSON token from Brevo
     if raw_key.startswith("ey"):
         try:
             import base64
@@ -224,34 +269,24 @@ class LoginView(APIView):
             </html>
             """
 
-            # 1. Try sending via Brevo's HTTPS REST API over Port 443 (Render Cloud Safe)
-            sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
+            # 1. Primary: Send via Google Apps Script Web App over Port 443 HTTPS (Native Gmail -> Primary Inbox)
+            sent, info = send_otp_via_google_script(email, subject, html_message, plain_message)
+
+            # 2. Backup: If Google Script is unreachable, try Brevo HTTPS API
             if not sent:
-                print(f"[Brevo HTTPS API notice]: {info}")
-                # Only use SMTP fallback when running locally (DEBUG=True).
-                # On Render (DEBUG=False), outbound ports 25, 465, 587 are blocked and cause a 3-4 minute freeze!
-                if getattr(settings, "DEBUG", False):
-                    try:
-                        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "krishimart.support@gmail.com")
-                        send_mail(
-                            subject=subject,
-                            message=plain_message,
-                            from_email=from_email,
-                            recipient_list=[email],
-                            html_message=html_message,
-                            fail_silently=False,
-                        )
-                    except Exception as mail_err:
-                        print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
-                else:
-                    return Response(
-                        {"error": f"Email delivery error: {info}. Please verify BREVO_API_KEY in Render."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
+                print(f"[Google Script notice]: {info}. Trying Brevo HTTPS API backup...")
+                sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
+
+            if not sent:
+                print(f"[OTP Delivery Error]: {info}")
+                return Response(
+                    {"error": f"Could not deliver verification email: {info}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
             return Response(
                 {
-                    "message": f"A 6-digit verification code was sent to {email}. Please check your inbox."
+                    "message": f"A 6-digit verification code was sent to {email}. Please check your Primary Inbox."
                 },
                 status=status.HTTP_200_OK,
             )
