@@ -3233,8 +3233,21 @@ export default function App() {
             <h4 className="font-bold text-slate-900 mb-3">Central Hub Contact</h4>
             <ul className="space-y-2">
               <li>📍 Dhangadhi Hub </li>
-              <li>📞 +977-9703931744 / 9766528500</li>
-              <li>✉️ support@krishimart.com.np</li>
+             <li>
+              📞 <a href="tel:+9779703931744" className="hover:text-green-600 transition-colors">
+                +977-9703931744
+              </a>
+              {" / "}
+              <a href="tel:+9779766528500" className="hover:text-green-600 transition-colors">
+                9766528500
+              </a>
+            </li>
+
+            <li>
+              ✉️ <a href="mailto:support@krishimart.com.np" className="hover:text-green-600 transition-colors">
+                support@krishimart.com.np
+              </a>
+            </li>
               <li>🕒 6:00 AM – 10:00 PM NPT Daily</li>
             </ul>
           </div>
