@@ -64,6 +64,32 @@ export default function AdminPanel() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [receiptOrder, setReceiptOrder] = useState(null);
   const [receiptDiscount, setReceiptDiscount] = useState(0);
+  const [orderDiscounts, setOrderDiscounts] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("krishimart_order_discounts") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [emailSentOrders, setEmailSentOrders] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("krishimart_confirmed_emails_sent") || "{}");
+    } catch {
+      return {};
+    }
+  });
+
+  // Always compute the true pre-discount subtotal (unit_price * quantity) so the main price is 100% consistent
+  const getTrueOrderSubtotal = (order) => {
+    if (!order) return 0;
+    const matchedProd = products.find(
+      (p) => p.id === order.product || p.name === order.product_name
+    );
+    if (matchedProd && Number(matchedProd.price) > 0) {
+      return Number(matchedProd.price) * Number(order.quantity || 1);
+    }
+    return Number(order.original_subtotal || order.total_price || 0);
+  };
 
   // Add Product state
   const [newProduct, setNewProduct] = useState({
@@ -352,16 +378,74 @@ const handleAddProduct = async (e) => {
 const handleOrderStatus = async (orderId, status) => {
     try {
       const res = await api.patch(`/marketplace/orders/${orderId}/`, { status });
-      showToast(`Order #${orderId} marked as ${status}.`);
+      showToast(
+        status === "CONFIRMED"
+          ? `Order #${orderId} status set to CONFIRMED. Apply discount (0% or more) in receipt to send email.`
+          : `Order #${orderId} marked as ${status} (Notification email sent).`
+      );
       fetchAllAdminData();
       if (status === "CONFIRMED") {
         const targetOrder = orders.find((o) => o.id === orderId) || res.data;
-        setReceiptDiscount(0);
-        setReceiptOrder({ ...targetOrder, status: "CONFIRMED" });
+        const savedDisc = orderDiscounts[orderId] ?? 0;
+        setReceiptDiscount(savedDisc);
+        setReceiptOrder({
+          ...targetOrder,
+          original_subtotal: getTrueOrderSubtotal(targetOrder),
+          status: "CONFIRMED",
+        });
       }
     } catch {
       showToast("Could not update order status.", "error");
     }
+  };
+
+  // Saves Discount (%) and sends the Confirmed Receipt Email strictly ONE TIME
+  const handleApplyDiscountAndEmail = async (order, discountPct) => {
+    if (!order) return;
+    const cleanDisc = Math.min(100, Math.max(0, Number(discountPct || 0)));
+
+    // Persist discount % for this order in localStorage so reopening the receipt is always consistent
+    const updatedDiscounts = { ...orderDiscounts, [order.id]: cleanDisc };
+    setOrderDiscounts(updatedDiscounts);
+    localStorage.setItem("krishimart_order_discounts", JSON.stringify(updatedDiscounts));
+
+    try {
+      const res = await api.post(
+        `/marketplace/orders/${order.id}/apply_discount_and_email/`,
+        { discount_percent: cleanDisc }
+      );
+
+      const updatedSent = { ...emailSentOrders, [order.id]: true };
+      setEmailSentOrders(updatedSent);
+      localStorage.setItem("krishimart_confirmed_emails_sent", JSON.stringify(updatedSent));
+
+      fetchAllAdminData();
+      showToast(
+        res.data?.message ||
+          `Discount (${cleanDisc}%) applied and confirmation email sent to customer!`
+      );
+    } catch {
+      showToast("Could not apply discount or send email. Make sure backend views.py is updated.", "error");
+    }
+  };
+
+  // Feature 3: Export Farmer Purchases or Customer Orders to Excel-compatible CSV
+  const handleExportCSV = (filename, headers, rows) => {
+    const escapeCell = (val) => {
+      const str = String(val ?? "").replace(/"/g, '""');
+      return `"${str}"`;
+    };
+    const csvContent =
+      "\uFEFF" +
+      [headers.map(escapeCell).join(","), ...rows.map((r) => r.map(escapeCell).join(","))].join(
+        "\n"
+      );
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    showToast(`Exported ${filename} successfully!`);
   };
 
   // Print receipt formatted to exact 1/4 of an A4 page (105mm x 148.5mm) with Discount %
@@ -1315,13 +1399,56 @@ const handleOrderStatus = async (orderId, status) => {
                 Full breakdown of crops purchased from farmers, rates paid, and payment settlements.
               </p>
             </div>
-            <div className="text-right">
-              <span className="text-xs text-slate-400 font-bold uppercase block">
-                Total Disbursed
-              </span>
-              <span className="text-2xl font-black text-[#14532D]">
-                रु {totalProcuredAmount.toLocaleString()}
-              </span>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() =>
+                  handleExportCSV(
+                    `KrishiMart_Farmer_Purchases_${new Date().toISOString().slice(0, 10)}.csv`,
+                    [
+                      "Voucher ID",
+                      "Date",
+                      "Farmer Name",
+                      "Farmer Phone",
+                      "Crop Name",
+                      "Category",
+                      "Quantity",
+                      "Unit",
+                      "Wholesale Rate (NPR)",
+                      "Total Paid (NPR)",
+                      "Payment Method",
+                      "Payment Status",
+                      "Pickup Location",
+                    ],
+                    purchases.map((p) => [
+                      `#KM-PUR-${p.id}`,
+                      new Date(p.created_at).toLocaleDateString(),
+                      p.farmer_name,
+                      p.farmer_phone,
+                      p.crop_name,
+                      p.category,
+                      p.quantity,
+                      p.unit,
+                      p.agreed_wholesale_rate,
+                      p.total_amount,
+                      p.payment_method,
+                      p.payment_status,
+                      p.pickup_location,
+                    ])
+                  )
+                }
+                className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold transition cursor-pointer"
+              >
+                📊 Export Ledger (.CSV / Excel)
+              </button>
+              <div className="text-right">
+                <span className="text-xs text-slate-400 font-bold uppercase block">
+                  Total Disbursed
+                </span>
+                <span className="text-2xl font-black text-[#14532D]">
+                  रु {totalProcuredAmount.toLocaleString()}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1735,13 +1862,50 @@ const handleOrderStatus = async (orderId, status) => {
       {/* 6. CUSTOMER ORDERS TAB */}
       {subTab === "orders" && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 divide-y divide-slate-100">
-          <div className="p-4 bg-slate-50 flex justify-between items-center">
+          <div className="p-4 bg-slate-50 flex flex-wrap justify-between items-center gap-3">
             <h3 className="font-bold text-sm text-slate-900">
               Live Customer Orders ({orders.length})
             </h3>
-            <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Auto-syncing
-            </span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  handleExportCSV(
+                    `KrishiMart_Customer_Orders_${new Date().toISOString().slice(0, 10)}.csv`,
+                    [
+                      "Order ID",
+                      "Date",
+                      "Customer Name",
+                      "Contact Phone",
+                      "Produce Item",
+                      "Quantity",
+                      "Unit",
+                      "Total Payable (NPR)",
+                      "Status",
+                      "Delivery Address",
+                    ],
+                    orders.map((o) => [
+                      `#KM-ORD-${o.id}`,
+                      new Date(o.created_at).toLocaleDateString(),
+                      o.buyer_name,
+                      o.contact_phone,
+                      o.product_name,
+                      o.quantity,
+                      o.product_unit,
+                      o.total_price,
+                      o.status,
+                      o.delivery_address,
+                    ])
+                  )
+                }
+                className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold transition cursor-pointer"
+              >
+                📊 Export Orders (.CSV / Excel)
+              </button>
+              <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Auto-syncing
+              </span>
+            </div>
           </div>
           {orders.length === 0 ? (
             <p className="p-8 text-center text-slate-500">No customer orders placed yet.</p>
@@ -1785,7 +1949,13 @@ const handleOrderStatus = async (orderId, status) => {
                   {(o.status === "CONFIRMED" || o.status === "DELIVERED") && (
                     <button
                       type="button"
-                      onClick={() => setReceiptOrder(o)}
+                      onClick={() => {
+                        setReceiptDiscount(orderDiscounts[o.id] ?? 0);
+                        setReceiptOrder({
+                          ...o,
+                          original_subtotal: getTrueOrderSubtotal(o),
+                        });
+                      }}
                       className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                       title="View, Print (1/4 A4) or Download Receipt"
                     >
@@ -2370,10 +2540,12 @@ const handleOrderStatus = async (orderId, status) => {
       {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL */}
       {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL (WITH DISCOUNT %) */}
       {receiptOrder && (() => {
-        const subtotal = Number(receiptOrder.total_price || 0);
+        const subtotal = getTrueOrderSubtotal(receiptOrder);
         const discountPct = Math.min(100, Math.max(0, Number(receiptDiscount || 0)));
         const discountAmt = subtotal * (discountPct / 100);
         const finalPayable = (subtotal - discountAmt).toFixed(2);
+        const orderForSlip = { ...receiptOrder, total_price: subtotal };
+        const isEmailAlreadySent = Boolean(emailSentOrders[receiptOrder.id]);
 
         return (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -2495,22 +2667,37 @@ const handleOrderStatus = async (orderId, status) => {
                 </div>
               </div>
 
-              {/* Print (1/4 A4) & Download (.PNG) Action Buttons */}
-              <div className="grid grid-cols-2 gap-2.5 pt-1">
+              {/* Email (Sent Once Only), Print (1/4 A4) & Download (.PNG) Action Buttons */}
+              <div className="space-y-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handlePrintQuarterA4(receiptOrder, discountPct)}
-                  className="py-3 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  onClick={() => handleApplyDiscountAndEmail(receiptOrder, discountPct)}
+                  className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer ${
+                    isEmailAlreadySent
+                      ? "bg-emerald-100 text-[#14532D] border border-emerald-300 hover:bg-emerald-200"
+                      : "bg-emerald-700 hover:bg-emerald-800 text-white"
+                  }`}
                 >
-                  🖨️ Print 1/4 A4 Slip
+                  {isEmailAlreadySent
+                    ? `✓ Confirmation Email Sent (Save ${discountPct}% Discount)`
+                    : `✉️ Apply ${discountPct}% Discount & Email Receipt to Customer`}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownloadReceiptPNG(receiptOrder, discountPct)}
-                  className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
-                >
-                  ⬇️ Download Receipt
-                </button>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handlePrintQuarterA4(orderForSlip, discountPct)}
+                    className="py-3 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    🖨️ Print 1/4 A4 Slip
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadReceiptPNG(orderForSlip, discountPct)}
+                    className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    ⬇️ Download Receipt
+                  </button>
+                </div>
               </div>
             </div>
           </div>
