@@ -18,6 +18,8 @@ import {
   Receipt,
   Star,
   BookOpen,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
@@ -85,6 +87,8 @@ export default function AdminPanel() {
     password: "",
     confirm_password: "",
   });
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false);
+  const [showNewUserConfirm, setShowNewUserConfirm] = useState(false);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -957,24 +961,52 @@ const handleOrderStatus = async (orderId, status) => {
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                type="password"
-                required
-                minLength={8}
-                placeholder="Password *"
-                value={newUser.password}
-                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm"
-              />
-              <input
-                type="password"
-                required
-                minLength={8}
-                placeholder="Confirm *"
-                value={newUser.confirm_password}
-                onChange={(e) => setNewUser({ ...newUser, confirm_password: e.target.value })}
-                className="px-3 py-2 rounded-xl border border-slate-200 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showNewUserPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  placeholder="Password *"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewUserPassword((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showNewUserPassword ? "Hide password" : "Show password"}
+                >
+                  {showNewUserPassword ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showNewUserConfirm ? "text" : "password"}
+                  required
+                  minLength={8}
+                  placeholder="Confirm *"
+                  value={newUser.confirm_password}
+                  onChange={(e) => setNewUser({ ...newUser, confirm_password: e.target.value })}
+                  className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewUserConfirm((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title={showNewUserConfirm ? "Hide password" : "Show password"}
+                >
+                  {showNewUserConfirm ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
             </div>
             <button
               type="submit"
