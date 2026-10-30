@@ -1,8 +1,12 @@
+import json
 import random
+import urllib.request
+from urllib.error import HTTPError, URLError
 from django.conf import settings
 from django.core.mail import send_mail
 from django.shortcuts import render
 from django.utils import timezone
+from decouple import config
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -15,6 +19,62 @@ from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 
 # In-memory OTP storage: { "user_email": { "code": "123456", "expires_at": timestamp } }
 PASSWORD_RESET_OTPS = {}
+
+
+def send_otp_via_brevo_api(to_email, recipient_name, otp_code, html_message, plain_message):
+    """
+    Sends email via Brevo's HTTPS REST API over Port 443.
+    This bypasses Render's firewall which blocks outbound SMTP ports 25, 465, and 587.
+    """
+    api_key = config("BREVO_API_KEY", default="") or getattr(settings, "BREVO_API_KEY", "")
+    if not api_key:
+        return False, "BREVO_API_KEY is not configured"
+
+    url = "https://api.brevo.com/v3/smtp/email"
+    sender_email = getattr(settings, "DEFAULT_FROM_EMAIL", "krishimart.support@gmail.com")
+    if "<" in sender_email and ">" in sender_email:
+        sender_email = sender_email.split("<")[1].split(">")[0].strip()
+    if "@" not in sender_email or "smtp-brevo.com" in sender_email:
+        sender_email = "krishimart.support@gmail.com"
+
+    payload = {
+        "sender": {
+            "name": "KrishiMart Nepal",
+            "email": sender_email,
+        },
+        "to": [
+            {
+                "email": to_email,
+                "name": recipient_name,
+            }
+        ],
+        "subject": f"Your KrishiMart Nepal Security Passcode: {otp_code}",
+        "htmlContent": html_message,
+        "textContent": plain_message,
+    }
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "api-key": api_key.strip(),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_body = response.read().decode("utf-8")
+            return True, res_body
+    except HTTPError as e:
+        err_body = e.read().decode("utf-8")
+        return False, f"Brevo API HTTP {e.code}: {err_body}"
+    except URLError as e:
+        return False, f"Brevo API Network Error: {e.reason}"
+    except Exception as e:
+        return False, str(e)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -147,23 +207,26 @@ class LoginView(APIView):
             </html>
             """
 
-            from_email = getattr(
-                settings,
-                "DEFAULT_FROM_EMAIL",
-                "krishimart.support@gmail.com",
-            )
-
-            try:
-                send_mail(
-                    subject=subject,
-                    message=plain_message,
-                    from_email=from_email,
-                    recipient_list=[email],
-                    html_message=html_message,
-                    fail_silently=False,
-                )
-            except Exception as mail_err:
-                print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
+            # 1. Try sending via Brevo's HTTPS REST API over Port 443 (Render Cloud Safe)
+            sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
+            if not sent:
+                print(f"[Brevo HTTPS API notice]: {info}. Trying SMTP fallback...")
+                try:
+                    from_email = getattr(
+                        settings,
+                        "DEFAULT_FROM_EMAIL",
+                        "krishimart.support@gmail.com",
+                    )
+                    send_mail(
+                        subject=subject,
+                        message=plain_message,
+                        from_email=from_email,
+                        recipient_list=[email],
+                        html_message=html_message,
+                        fail_silently=False,
+                    )
+                except Exception as mail_err:
+                    print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
 
             return Response(
                 {
