@@ -26,9 +26,26 @@ def send_otp_via_brevo_api(to_email, recipient_name, otp_code, html_message, pla
     Sends email via Brevo's HTTPS REST API over Port 443.
     This bypasses Render's firewall which blocks outbound SMTP ports 25, 465, and 587.
     """
-    api_key = config("BREVO_API_KEY", default="") or getattr(settings, "BREVO_API_KEY", "")
-    if not api_key:
+    raw_key = (
+        config("BREVO_API_KEY", default="")
+        or getattr(settings, "BREVO_API_KEY", "")
+        or config("EMAIL_HOST_PASSWORD", default="")
+        or getattr(settings, "EMAIL_HOST_PASSWORD", "")
+    ).strip()
+
+    if not raw_key:
         return False, "BREVO_API_KEY is not configured"
+
+    # Auto-decode if the user pasted the Base64 JSON token from Brevo
+    if raw_key.startswith("ey"):
+        try:
+            import base64
+            decoded_json = json.loads(base64.b64decode(raw_key).decode("utf-8"))
+            api_key = decoded_json.get("api_key", raw_key)
+        except Exception:
+            api_key = raw_key
+    else:
+        api_key = raw_key
 
     url = "https://api.brevo.com/v3/smtp/email"
     sender_email = getattr(settings, "DEFAULT_FROM_EMAIL", "krishimart.support@gmail.com")
@@ -210,23 +227,27 @@ class LoginView(APIView):
             # 1. Try sending via Brevo's HTTPS REST API over Port 443 (Render Cloud Safe)
             sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
             if not sent:
-                print(f"[Brevo HTTPS API notice]: {info}. Trying SMTP fallback...")
-                try:
-                    from_email = getattr(
-                        settings,
-                        "DEFAULT_FROM_EMAIL",
-                        "krishimart.support@gmail.com",
+                print(f"[Brevo HTTPS API notice]: {info}")
+                # Only use SMTP fallback when running locally (DEBUG=True).
+                # On Render (DEBUG=False), outbound ports 25, 465, 587 are blocked and cause a 3-4 minute freeze!
+                if getattr(settings, "DEBUG", False):
+                    try:
+                        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "krishimart.support@gmail.com")
+                        send_mail(
+                            subject=subject,
+                            message=plain_message,
+                            from_email=from_email,
+                            recipient_list=[email],
+                            html_message=html_message,
+                            fail_silently=False,
+                        )
+                    except Exception as mail_err:
+                        print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
+                else:
+                    return Response(
+                        {"error": f"Email delivery error: {info}. Please verify BREVO_API_KEY in Render."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     )
-                    send_mail(
-                        subject=subject,
-                        message=plain_message,
-                        from_email=from_email,
-                        recipient_list=[email],
-                        html_message=html_message,
-                        fail_silently=False,
-                    )
-                except Exception as mail_err:
-                    print(f"[OTP Mail Delivery Fallback] To: {email} | OTP: {otp_code} | Error: {mail_err}")
 
             return Response(
                 {
