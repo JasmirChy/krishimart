@@ -316,6 +316,108 @@ def send_farmer_procurement_email(purchase, is_settlement_update=False):
     send_krishimart_email_async(to_email, subject, html_message, plain_message)
 
 
+
+
+def send_farmer_offer_status_email(submission):
+    """
+    Sends a clean KrishiMart HTML card email to the farmer when the Admin
+    declines (REJECTED) or approves (APPROVED) their wholesale harvest offer.
+    """
+    farmer = getattr(submission, "seller", None)
+    to_email = getattr(farmer, "email", None)
+    if not to_email:
+        return
+
+    farmer_name = getattr(farmer, "full_name", None) or "Verified Farmer"
+    status_val = (getattr(submission, "status", "") or "").upper()
+    remarks = (getattr(submission, "admin_remarks", "") or "").strip()
+
+    if status_val == "REJECTED":
+        subject = f"Update: Your KrishiMart Harvest Offer #KM-SUB-{submission.id} ({submission.vegetable_name})"
+        headline = "Wholesale Harvest Offer Declined"
+        badge_bg, badge_border, badge_color = "#fef2f2", "#dc2626", "#991b1b"
+        badge_text = "✕ OFFER DECLINED BY ADMIN"
+        intro_text = (
+            f"Namaste <strong>{farmer_name}</strong>, thank you for submitting your wholesale harvest "
+            f"offer to KrishiMart. Unfortunately, our Admin team could not procure this batch at this time."
+        )
+    elif status_val == "APPROVED":
+        subject = f"Your KrishiMart Harvest Offer #KM-SUB-{submission.id} ({submission.vegetable_name}) is Approved!"
+        headline = "Wholesale Harvest Offer Approved"
+        badge_bg, badge_border, badge_color = "#f0fdf4", "#16a34a", "#14532D"
+        badge_text = "✓ OFFER APPROVED"
+        intro_text = (
+            f"Namaste <strong>{farmer_name}</strong>, our Admin team has reviewed and approved your "
+            f"harvest offer for <strong>{submission.vegetable_name}</strong>!"
+        )
+    else:
+        return
+
+    remarks_html = (
+        f'<div style="margin-top: 8px; padding: 10px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; color: #92400e;">'
+        f"<strong>Admin Reason / Note:</strong> {remarks}</div>"
+        if remarks
+        else ""
+    )
+
+    plain_message = (
+        f"{headline}\n\n"
+        f"Offer ID: #KM-SUB-{submission.id}\n"
+        f"Crop: {submission.vegetable_name} ({submission.category})\n"
+        f"Quantity Offered: {submission.quantity} {submission.unit}\n"
+        f"Expected Wholesale Rate: Rs. {submission.expected_price_per_unit} / {submission.unit}\n"
+        f"Pickup Location: {submission.pickup_location}\n"
+        f"Admin Note: {remarks or '—'}\n\n"
+        f"KrishiMart Agricultural Marketplace\n"
+        f"Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal\n"
+        f"support@krishimart.com.np • +977-1-4423456"
+    )
+
+    html_message = f"""
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+      </head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px;">
+        <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <div style="background: #14532D; padding: 24px; text-align: center; color: #ffffff;">
+            <h1 style="font-size: 24px; font-weight: 900; margin: 0; color: #ffffff;">🌱 KrishiMart Nepal</h1>
+            <div style="font-size: 12px; color: #a7f3d0; margin-top: 4px;">किसान र उपभोक्ता जोड्ने डिजिटल बजार</div>
+          </div>
+          <div style="padding: 28px 24px; text-align: center; color: #1e293b;">
+            <div style="background: {badge_bg}; border: 1.5px dashed {badge_border}; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 800; color: {badge_color}; display: inline-block; margin-bottom: 14px;">
+              {badge_text}
+            </div>
+            <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 10px 0; color: #0f172a;">{headline}</h2>
+            <p style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 20px 0;">
+              {intro_text}
+            </p>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; text-align: left; font-size: 13px; line-height: 1.8; color: #334155; margin-bottom: 18px;">
+              <div><strong>Offer Reference:</strong> #KM-SUB-{submission.id}</div>
+              <div><strong>Crop Offered:</strong> {submission.vegetable_name} ({submission.category})</div>
+              <div><strong>Quantity Offered:</strong> {submission.quantity} {submission.unit}</div>
+              <div><strong>Quoted Wholesale Rate:</strong> रु {submission.expected_price_per_unit} / {submission.unit}</div>
+              <div><strong>Farm Pickup Location:</strong> {submission.pickup_location}</div>
+              {remarks_html}
+            </div>
+            <p style="font-size: 12px; color: #64748b; margin: 0;">
+              You can submit a new harvest batch or chat directly with our Admin team anytime on <strong>KrishiMart</strong>.
+            </p>
+          </div>
+          <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; font-size: 11px; color: #64748b; text-align: center; line-height: 1.5;">
+            KrishiMart Agricultural Marketplace<br/>
+            Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal<br/>
+            support@krishimart.com.np • +977-1-4423456
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    send_krishimart_email_async(to_email, subject, html_message, plain_message)
+
+
 INITIAL_NEPAL_PRODUCTS = [
     {
         "name": "Organic Kavre Red Cherry Tomatoes",
@@ -510,6 +612,11 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
         submission.status = new_status
         submission.admin_remarks = admin_remarks
         submission.save()
+
+        # Email the farmer when their harvest offer is Declined (REJECTED) or Approved
+        if new_status in ["REJECTED", "APPROVED"]:
+            send_farmer_offer_status_email(submission)
+
         return Response(SellProductSubmissionSerializer(submission).data)
 
 
