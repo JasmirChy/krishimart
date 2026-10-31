@@ -150,6 +150,45 @@ export default function App() {
   // Printable 1/4 A4 Slip State (Customer Order or Farmer Sale)
   const [activeSlip, setActiveSlip] = useState(null);
 
+  // Syncs the Admin's applied Discount (%) and true original subtotal onto Customer's My Orders & 1/4 A4 Receipt
+  const getCustomerOrderPricing = (order) => {
+    if (!order) {
+      return { subtotal: 0, unitPrice: 0, discPct: 0, discAmt: 0, netTotal: 0 };
+    }
+    const qty = Math.max(1, Number(order.quantity || 1));
+    const matchedProd = (Array.isArray(dbProducts) ? dbProducts : []).find(
+      (p) => p.id === order.product || p.name === order.product_name
+    );
+    let subtotal = 0;
+    if (order.subtotal_price !== undefined && Number(order.subtotal_price) > 0) {
+      subtotal = Number(order.subtotal_price);
+    } else if (matchedProd && Number(matchedProd.price) > 0) {
+      subtotal = Number(matchedProd.price) * qty;
+    } else {
+      subtotal = Number(order.total_price || 0);
+    }
+    subtotal = Number(subtotal.toFixed(2));
+    const unitPrice = Number((subtotal / qty).toFixed(2));
+
+    let localDisc = 0;
+    try {
+      const savedMap = JSON.parse(localStorage.getItem("krishimart_order_discounts") || "{}");
+      if (savedMap[order.id] !== undefined) {
+        localDisc = Number(savedMap[order.id] || 0);
+      }
+    } catch {
+      localDisc = 0;
+    }
+
+    const apiDisc =
+      order.discount_percent !== undefined ? Number(order.discount_percent || 0) : 0;
+    const discPct = Math.min(100, Math.max(0, apiDisc > 0 ? apiDisc : localDisc));
+    const discAmt = Number(((subtotal * discPct) / 100).toFixed(2));
+    const netTotal = Number(Math.max(0, subtotal - discAmt).toFixed(2));
+
+    return { subtotal, unitPrice, discPct, discAmt, netTotal };
+  };
+
   // Real Stories & Reviews (with Optional Photo Upload)
   const [stories, setStories] = useState([]);
   const [storyModalOpen, setStoryModalOpen] = useState(false);
@@ -1368,7 +1407,9 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-3">
-                {myOrders.map((o) => (
+                {myOrders.map((o) => {
+                  const { subtotal, discPct, discAmt, netTotal } = getCustomerOrderPricing(o);
+                  return (
                   <div
                     key={o.id}
                     className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4"
@@ -1392,6 +1433,11 @@ export default function App() {
                         >
                           {o.status}
                         </span>
+                        {discPct > 0 && (
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-[#14532D] border border-emerald-200">
+                            🎉 {discPct}% OFF
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-slate-500">
                         Qty:{" "}
@@ -1404,9 +1450,23 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="text-right">
-                        <p className="text-base sm:text-lg font-black text-[#14532D]">
-                          रु {o.total_price}
-                        </p>
+                        {discPct > 0 ? (
+                          <>
+                            <p className="text-xs text-slate-400 line-through">
+                              रु {subtotal.toFixed(2)}
+                            </p>
+                            <p className="text-base sm:text-lg font-black text-[#14532D]">
+                              रु {netTotal.toFixed(2)}
+                            </p>
+                            <p className="text-[10px] font-bold text-amber-700">
+                              Saved रु {discAmt.toFixed(2)} ({discPct}%)
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-base sm:text-lg font-black text-[#14532D]">
+                            रु {subtotal.toFixed(2)}
+                          </p>
+                        )}
                         <p className="text-[11px] text-slate-400">
                           {new Date(o.created_at).toLocaleDateString()}
                         </p>
@@ -1428,7 +1488,8 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -2855,46 +2916,62 @@ export default function App() {
                     <span>रु {Number(activeSlip.total_amount).toLocaleString()}</span>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Customer:</span>
-                    <span className="font-bold">
-                      {activeSlip.customer_name || user?.full_name || "Verified Buyer"}
-                    </span>
+              ) : (() => {
+                const { subtotal, unitPrice, discPct, discAmt, netTotal } =
+                  getCustomerOrderPricing(activeSlip);
+                return (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Customer:</span>
+                      <span className="font-bold">
+                        {activeSlip.customer_name || user?.full_name || "Verified Buyer"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Delivery Address:</span>
+                      <span className="font-bold text-right max-w-[180px]">
+                        {activeSlip.delivery_address || "Verified Address"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phone:</span>
+                      <span className="font-bold">
+                        {activeSlip.contact_phone || user?.phone_number || "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Produce:</span>
+                      <span className="font-bold">{activeSlip.product_name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Quantity & Rate:</span>
+                      <span className="font-bold">
+                        {activeSlip.quantity} {activeSlip.product_unit || "unit(s)"} (रु {unitPrice.toFixed(2)}/{activeSlip.product_unit || "unit"})
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Order Status:</span>
+                      <span className="font-bold text-emerald-700">{activeSlip.status}</span>
+                    </div>
+                    <div className="border-t border-slate-200 pt-1.5 space-y-1">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Subtotal Amount:</span>
+                        <span className="font-bold">रु {subtotal.toFixed(2)}</span>
+                      </div>
+                      {discPct > 0 && (
+                        <div className="flex justify-between text-amber-700 font-bold">
+                          <span>Discount ({discPct}%):</span>
+                          <span>- रु {discAmt.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="border-t border-dashed border-slate-300 pt-1 flex justify-between text-xs font-black text-[#14532D]">
+                        <span>Total Payable:</span>
+                        <span>रु {netTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Delivery Address:</span>
-                    <span className="font-bold text-right max-w-[180px]">
-                      {activeSlip.delivery_address || "Verified Address"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Phone:</span>
-                    <span className="font-bold">
-                      {activeSlip.contact_phone || user?.phone_number || "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Produce:</span>
-                    <span className="font-bold">{activeSlip.product_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Quantity:</span>
-                    <span className="font-bold">
-                      {activeSlip.quantity} {activeSlip.product_unit || "unit(s)"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Order Status:</span>
-                    <span className="font-bold text-emerald-700">{activeSlip.status}</span>
-                  </div>
-                  <div className="border-t border-slate-200 pt-1.5 flex justify-between text-xs font-black text-[#14532D]">
-                    <span>Total Amount:</span>
-                    <span>रु {Number(activeSlip.total_price).toLocaleString()}</span>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="border-t border-slate-200 pt-2 text-center text-[9px] text-slate-400 space-y-0.5">
                 <p className="font-bold text-emerald-700">✓ Official KrishiMart Verified Slip</p>
@@ -3023,32 +3100,42 @@ export default function App() {
                       y
                     );
                   } else {
+                    const { subtotal, unitPrice, discPct, discAmt, netTotal } =
+                      getCustomerOrderPricing(activeSlip);
                     ctx.fillText(
                       `Customer: ${activeSlip.customer_name || user?.full_name || "Verified Buyer"}`,
                       32,
                       y
                     );
-                    y += 30;
+                    y += 26;
                     ctx.fillText(`Produce: ${activeSlip.product_name}`, 32, y);
-                    y += 30;
+                    y += 26;
                     ctx.fillText(
-                      `Quantity: ${activeSlip.quantity} ${activeSlip.product_unit || "unit(s)"}`,
+                      `Quantity: ${activeSlip.quantity} ${activeSlip.product_unit || "unit(s)"} (रु ${unitPrice.toFixed(2)}/${activeSlip.product_unit || "unit"})`,
                       32,
                       y
                     );
-                    y += 30;
+                    y += 26;
                     ctx.fillText(
                       `Address: ${(activeSlip.delivery_address || "").slice(0, 36)}`,
                       32,
                       y
                     );
-                    y += 30;
+                    y += 26;
                     ctx.fillText(`Status: ${activeSlip.status}`, 32, y);
-                    y += 40;
+                    y += 28;
+                    ctx.fillText(`Subtotal Amount: रु ${subtotal.toFixed(2)}`, 32, y);
+                    if (discPct > 0) {
+                      y += 24;
+                      ctx.fillStyle = "#b45309";
+                      ctx.font = "bold 12px sans-serif";
+                      ctx.fillText(`Discount (${discPct}%): - रु ${discAmt.toFixed(2)}`, 32, y);
+                    }
+                    y += 32;
                     ctx.font = "bold 16px sans-serif";
                     ctx.fillStyle = "#14532D";
                     ctx.fillText(
-                      `Total Amount: रु ${Number(activeSlip.total_price).toLocaleString()}`,
+                      `Total Payable: रु ${netTotal.toFixed(2)}`,
                       32,
                       y
                     );

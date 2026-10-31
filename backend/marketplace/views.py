@@ -29,10 +29,38 @@ GOOGLE_SCRIPT_WEBHOOK_URL = config(
     default="https://script.google.com/macros/s/AKfycby54qvMjU39dehVbkysaL16Z2qEpfvo_txYzaDJ9tzZsqBz98IWtEuEs-mXUDBVMuQr/exec",
 )
 
-# Tracks applied discount percentage per order ID (without overwriting order.total_price)
-ORDER_DISCOUNTS = {}
-# Tracks orders whose CONFIRMED email has already been sent so it is only sent ONCE
-CONFIRMED_EMAIL_SENT_ORDERS = set()
+import os
+
+DISCOUNT_CACHE_FILE = os.path.join(os.path.dirname(__file__), "order_discounts_cache.json")
+
+
+def _load_discount_cache():
+    try:
+        if os.path.exists(DISCOUNT_CACHE_FILE):
+            with open(DISCOUNT_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                discounts = {int(k): Decimal(str(v)) for k, v in data.get("discounts", {}).items()}
+                sent = {int(x) for x in data.get("sent_orders", [])}
+                return discounts, sent
+    except Exception:
+        pass
+    return {}, set()
+
+
+def _save_discount_cache():
+    try:
+        data = {
+            "discounts": {str(k): str(v) for k, v in ORDER_DISCOUNTS.items()},
+            "sent_orders": list(CONFIRMED_EMAIL_SENT_ORDERS),
+        }
+        with open(DISCOUNT_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+# Tracks applied discount percentage per order ID (persisted across server restarts)
+ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS = _load_discount_cache()
 
 
 def send_krishimart_email_async(to_email, subject, html_message, plain_message):
@@ -102,6 +130,7 @@ def send_order_status_email(order, discount_percent=None):
         except Exception:
             disc_pct = Decimal("0")
         ORDER_DISCOUNTS[order.id] = disc_pct
+        _save_discount_cache()
     elif order.id in ORDER_DISCOUNTS:
         disc_pct = ORDER_DISCOUNTS[order.id]
     else:
@@ -671,6 +700,35 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Order.objects.all()
         return Order.objects.filter(buyer=user)
 
+    def _enrich_order_data(self, order_obj, data_dict):
+        subtotal = get_order_original_subtotal(order_obj)
+        disc_pct = ORDER_DISCOUNTS.get(order_obj.id, Decimal("0"))
+        disc_amt = ((subtotal * disc_pct) / Decimal("100")).quantize(Decimal("0.01"))
+        net_total = (subtotal - disc_amt).quantize(Decimal("0.01"))
+        enriched = dict(data_dict)
+        enriched["subtotal_price"] = str(subtotal)
+        enriched["discount_percent"] = float(disc_pct)
+        enriched["discount_amount"] = str(disc_amt)
+        enriched["net_total"] = str(net_total)
+        return enriched
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        orders_by_id = {o.id: o for o in queryset}
+        enriched_list = [
+            self._enrich_order_data(orders_by_id[item["id"]], item)
+            if item.get("id") in orders_by_id
+            else item
+            for item in serializer.data
+        ]
+        return Response(enriched_list)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(self._enrich_order_data(instance, serializer.data))
+
     def perform_create(self, serializer):
         product = serializer.validated_data["product"]
         quantity = serializer.validated_data["quantity"]
@@ -726,6 +784,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             disc_pct = Decimal("0")
 
         ORDER_DISCOUNTS[order.id] = disc_pct
+        _save_discount_cache()
 
         # Ensure order.total_price in DB stays as the true original subtotal (e.g. Rs. 900.00)
         subtotal = get_order_original_subtotal(order)
@@ -741,6 +800,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not already_sent:
             send_order_status_email(order, discount_percent=disc_pct)
             CONFIRMED_EMAIL_SENT_ORDERS.add(order.id)
+            _save_discount_cache()
 
         buyer_email = getattr(order.buyer, "email", None) or "customer"
         disc_str = str(int(disc_pct)) if disc_pct == int(disc_pct) else str(disc_pct)
