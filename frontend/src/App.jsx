@@ -142,6 +142,9 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [selectedDistrict, setSelectedDistrict] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("FEATURED");
+  const [inStockOnly, setInStockOnly] = useState(false);
+  const [orderStatusFilter, setOrderStatusFilter] = useState("ALL");
 
   // Language Toggle ("EN" | "NP")
   const [lang, setLang] = useState("EN");
@@ -614,18 +617,26 @@ export default function App() {
     );
   }
 
-  const filteredProducts = dbProducts.filter((p) => {
-    const matchesCat = selectedCategory === "ALL" || p.category === selectedCategory;
-    const matchesDistrict =
-      selectedDistrict === "ALL" ||
-      (p.origin_location &&
-        p.origin_location.toLowerCase().includes(selectedDistrict.toLowerCase()));
-    const matchesSearch =
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (p.origin_location && p.origin_location.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesCat && matchesDistrict && matchesSearch;
-  });
+  const filteredProducts = dbProducts
+    .filter((p) => {
+      const matchesCat = selectedCategory === "ALL" || p.category === selectedCategory;
+      const matchesDistrict =
+        selectedDistrict === "ALL" ||
+        (p.origin_location &&
+          p.origin_location.toLowerCase().includes(selectedDistrict.toLowerCase()));
+      const matchesSearch =
+        (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.description || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.origin_location && p.origin_location.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesStock = !inStockOnly || Number(p.stock_quantity) > 0;
+      return matchesCat && matchesDistrict && matchesSearch && matchesStock;
+    })
+    .sort((a, b) => {
+      if (sortBy === "PRICE_ASC") return Number(a.price) - Number(b.price);
+      if (sortBy === "PRICE_DESC") return Number(b.price) - Number(a.price);
+      if (sortBy === "STOCK_DESC") return Number(b.stock_quantity) - Number(a.stock_quantity);
+      return 0;
+    });
 
   const basketTotal = basket.reduce((sum, item) => sum + Number(item.price) * item.qty, 0);
   const totalBasketItems = basket.reduce((sum, item) => sum + item.qty, 0);
@@ -1377,123 +1388,309 @@ export default function App() {
           </div>
         )}
 
-        {/* DEDICATED "MY ORDERS" TRACKING VIEW */}
-        {activeTab === "orders" && user && (
-          <div className="max-w-5xl mx-auto px-4 sm:px-8 py-6 sm:py-10 space-y-6">
+        {/* DEDICATED "MY ORDERS" TRACKING VIEW (DARAZ-STYLE MOBILE & DESKTOP UX) */}
+        {activeTab === "orders" && user && (() => {
+          const orderCounts = {
+            ALL: myOrders.length,
+            PENDING: myOrders.filter((o) => o.status === "PENDING").length,
+            CONFIRMED: myOrders.filter((o) => o.status === "CONFIRMED").length,
+            DELIVERED: myOrders.filter((o) => o.status === "DELIVERED").length,
+            CANCELLED: myOrders.filter((o) => o.status === "CANCELLED").length,
+          };
+          const totalSavedAmount = myOrders.reduce((acc, o) => {
+            if (o.status === "CANCELLED") return acc;
+            const { discAmt } = getCustomerOrderPricing(o);
+            return acc + discAmt;
+          }, 0);
+          const displayedOrders =
+            orderStatusFilter === "ALL"
+              ? myOrders
+              : myOrders.filter((o) => o.status === orderStatusFilter);
+
+          return (
+          <div className="max-w-5xl mx-auto px-3 sm:px-8 py-5 sm:py-10 space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-                  Order History & Live Status
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">
+                  ● Live Order Tracking & Digital Receipts
                 </span>
-                <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
-                  My Harvest Orders
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900">
+                  {tr("My Harvest Orders", "मेरा अर्डरहरू")}
                 </h2>
               </div>
               <button
                 onClick={() => setActiveTab("marketplace")}
-                className="px-4 py-2 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
               >
                 + Continue Shopping
               </button>
             </div>
 
-            {myOrders.length === 0 ? (
+            {/* Daraz-Style 4-Card Mobile-First Summary Strip */}
+            {myOrders.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3.5">
+                <div className="bg-white rounded-2xl p-3.5 border border-slate-200/90 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Total Orders
+                  </p>
+                  <p className="text-lg sm:text-xl font-black text-slate-900 mt-0.5">
+                    {orderCounts.ALL}
+                  </p>
+                </div>
+                <div className="bg-blue-50/60 rounded-2xl p-3.5 border border-blue-200/80 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                    Active / Packing
+                  </p>
+                  <p className="text-lg sm:text-xl font-black text-blue-900 mt-0.5">
+                    {orderCounts.PENDING + orderCounts.CONFIRMED}
+                  </p>
+                </div>
+                <div className="bg-emerald-50/70 rounded-2xl p-3.5 border border-emerald-200/80 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                    Delivered
+                  </p>
+                  <p className="text-lg sm:text-xl font-black text-[#14532D] mt-0.5">
+                    {orderCounts.DELIVERED}
+                  </p>
+                </div>
+                <div className="bg-amber-50/70 rounded-2xl p-3.5 border border-amber-200/80 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                    Total Discount Saved
+                  </p>
+                  <p className="text-lg sm:text-xl font-black text-amber-700 mt-0.5">
+                    रु {totalSavedAmount.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Daraz-Style Horizontal Swipeable Status Filter Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {[
+                { id: "ALL", label: "All Orders", count: orderCounts.ALL },
+                { id: "PENDING", label: "To Confirm", count: orderCounts.PENDING },
+                { id: "CONFIRMED", label: "Confirmed & Packing", count: orderCounts.CONFIRMED },
+                { id: "DELIVERED", label: "Delivered", count: orderCounts.DELIVERED },
+                { id: "CANCELLED", label: "Cancelled", count: orderCounts.CANCELLED },
+              ].map((tab) => {
+                const active = orderStatusFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setOrderStatusFilter(tab.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                      active
+                        ? "bg-[#14532D] text-white shadow-xs"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        active ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {displayedOrders.length === 0 ? (
               <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
                 <PackageCheck className="w-10 h-10 text-slate-400 mx-auto" />
-                <p className="text-sm font-bold text-slate-700">No orders placed yet</p>
-                <p className="text-xs text-slate-500">
-                  Add fresh vegetables or fruits to your basket to place your first order.
+                <p className="text-sm font-bold text-slate-700">
+                  {orderStatusFilter === "ALL"
+                    ? "No orders placed yet"
+                    : `No ${orderStatusFilter.toLowerCase()} orders found`}
                 </p>
+                <p className="text-xs text-slate-500">
+                  Add fresh vegetables or fruits to your basket to place an order directly from Nepali farms.
+                </p>
+                {orderStatusFilter !== "ALL" && (
+                  <button
+                    type="button"
+                    onClick={() => setOrderStatusFilter("ALL")}
+                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    View All Orders
+                  </button>
+                )}
               </div>
             ) : (
-              <div className="space-y-3">
-                {myOrders.map((o) => {
-                  const { subtotal, discPct, discAmt, netTotal } = getCustomerOrderPricing(o);
+              <div className="space-y-3.5">
+                {displayedOrders.map((o) => {
+                  const { subtotal, unitPrice, discPct, discAmt, netTotal } = getCustomerOrderPricing(o);
+                  const stepIdx =
+                    o.status === "DELIVERED"
+                      ? 3
+                      : o.status === "CONFIRMED"
+                      ? 2
+                      : o.status === "PENDING"
+                      ? 1
+                      : 0;
+                  const matchedProductForReorder = (Array.isArray(dbProducts) ? dbProducts : []).find(
+                    (p) => p.id === o.product || p.name === o.product_name
+                  );
+
                   return (
                   <div
                     key={o.id}
-                    className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4"
+                    className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs hover:shadow-md transition space-y-3.5"
                   >
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-extrabold text-slate-400">#{o.id}</span>
-                        <h3 className="font-bold text-sm sm:text-base text-slate-900">
-                          {o.product_name}
-                        </h3>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                            o.status === "DELIVERED"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : o.status === "CONFIRMED"
-                              ? "bg-blue-100 text-blue-800"
-                              : o.status === "CANCELLED"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-amber-100 text-amber-800"
-                          }`}
-                        >
-                          {o.status}
-                        </span>
-                        {discPct > 0 && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-[#14532D] border border-emerald-200">
-                            🎉 {discPct}% OFF
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[11px] font-black text-slate-600">
+                            #KM-ORD-{o.id}
                           </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Qty:{" "}
-                        <strong>
-                          {o.quantity} {o.product_unit}
-                        </strong>{" "}
-                        • Address: <strong>{o.delivery_address}</strong> • Phone:{" "}
-                        <strong>{o.contact_phone}</strong>
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        {discPct > 0 ? (
-                          <>
-                            <p className="text-xs text-slate-400 line-through">
-                              रु {subtotal.toFixed(2)}
-                            </p>
-                            <p className="text-base sm:text-lg font-black text-[#14532D]">
-                              रु {netTotal.toFixed(2)}
-                            </p>
-                            <p className="text-[10px] font-bold text-amber-700">
-                              Saved रु {discAmt.toFixed(2)} ({discPct}%)
-                            </p>
-                          </>
-                        ) : (
-                          <p className="text-base sm:text-lg font-black text-[#14532D]">
-                            रु {subtotal.toFixed(2)}
-                          </p>
-                        )}
+                          <h3 className="font-extrabold text-sm sm:text-base text-slate-900">
+                            {o.product_name}
+                          </h3>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              o.status === "DELIVERED"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : o.status === "CONFIRMED"
+                                ? "bg-blue-100 text-blue-800"
+                                : o.status === "CANCELLED"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {o.status}
+                          </span>
+                          {discPct > 0 && (
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-[#14532D] border border-emerald-200">
+                              🎉 {discPct}% OFF
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Qty:{" "}
+                          <strong className="text-slate-800">
+                            {o.quantity} {o.product_unit}
+                          </strong>{" "}
+                          (रु {unitPrice.toFixed(2)}/{o.product_unit || "unit"}) • Address:{" "}
+                          <strong className="text-slate-800">{o.delivery_address}</strong> • Phone:{" "}
+                          <strong className="text-slate-800">{o.contact_phone}</strong>
+                        </p>
                         <p className="text-[11px] text-slate-400">
-                          {new Date(o.created_at).toLocaleDateString()}
+                          Ordered on {new Date(o.created_at).toLocaleDateString()}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
-                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                      >
-                        <Receipt className="w-3.5 h-3.5" /> Receipt
-                      </button>
-                      {o.status === "PENDING" && (
-                        <button
-                          onClick={() => handleCancelOrder(o.id)}
-                          className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      )}
+
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
+                        <div className="text-left sm:text-right">
+                          {discPct > 0 ? (
+                            <>
+                              <p className="text-xs text-slate-400 line-through">
+                                रु {subtotal.toFixed(2)}
+                              </p>
+                              <p className="text-base sm:text-lg font-black text-[#14532D]">
+                                रु {netTotal.toFixed(2)}
+                              </p>
+                              <p className="text-[10px] font-bold text-amber-700">
+                                Saved रु {discAmt.toFixed(2)} ({discPct}%)
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[10px] uppercase font-bold text-slate-400">
+                                Total Payable
+                              </p>
+                              <p className="text-base sm:text-lg font-black text-[#14532D]">
+                                रु {subtotal.toFixed(2)}
+                              </p>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
+                            className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <Receipt className="w-3.5 h-3.5" /> Receipt
+                          </button>
+                          {matchedProductForReorder && Number(matchedProductForReorder.stock_quantity) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleAddToBasket(matchedProductForReorder, 1)}
+                              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-[#14532D] text-xs font-bold transition cursor-pointer"
+                              title="Add this produce item to basket again"
+                            >
+                              ↻ Buy Again
+                            </button>
+                          )}
+                          {o.status === "PENDING" && (
+                            <button
+                              onClick={() => handleCancelOrder(o.id)}
+                              className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
+
+                    {/* Daraz-Style 3-Step Visual Order Progress Tracker */}
+                    {o.status === "CANCELLED" ? (
+                      <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-red-700 font-semibold">
+                        <span>✕ This order was cancelled and stock has been restored.</span>
+                        <span className="text-[11px] font-bold uppercase">Cancelled</span>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-3">
+                        <div className="grid grid-cols-3 gap-2 relative">
+                          {[
+                            { step: 1, title: "1. Order Placed", sub: "Received by Hub" },
+                            {
+                              step: 2,
+                              title: "2. Confirmed & Packing",
+                              sub: discPct > 0 ? `Approved (${discPct}% OFF)` : "Quality Checked",
+                            },
+                            { step: 3, title: "3. Delivered", sub: "Handed to Customer" },
+                          ].map((st) => {
+                            const done = stepIdx >= st.step;
+                            const current = stepIdx === st.step;
+                            return (
+                              <div key={st.step} className="flex flex-col items-center text-center">
+                                <div
+                                  className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center transition ${
+                                    done
+                                      ? "bg-[#14532D] text-white shadow-2xs"
+                                      : "bg-slate-200 text-slate-500"
+                                  } ${current ? "ring-4 ring-emerald-200/80" : ""}`}
+                                >
+                                  {done ? "✓" : st.step}
+                                </div>
+                                <p
+                                  className={`text-[11px] font-extrabold mt-1 ${
+                                    done ? "text-[#14532D]" : "text-slate-400"
+                                  }`}
+                                >
+                                  {st.title}
+                                </p>
+                                <p className="text-[9px] text-slate-400 hidden sm:block">{st.sub}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   );
                 })}
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* DEDICATED CHAT VIEW */}
         {activeTab === "chat" && user && (
@@ -1825,43 +2022,72 @@ export default function App() {
               </section>
             )}
 
-            {/* 7. FRESH DAILY HARVESTS */}
+            {/* 7. FRESH DAILY HARVESTS (DARAZ-STYLE MOBILE-FIRST 2-COL GRID & INSTANT SORT) */}
             {activeTab !== "stories" && (
               <section
                 id="fresh-harvests"
-                className="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-6"
+                className="max-w-7xl mx-auto px-3 sm:px-8 py-5 sm:py-8 space-y-5"
               >
-                <div className="flex flex-wrap items-end justify-between gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3.5">
                   <div>
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[11px] font-bold">
                       ● Live Farm Marketplace ({filteredProducts.length} Batches)
                     </span>
                     <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-1">
-                      Fresh Daily Harvests
+                      {tr("Fresh Daily Harvests", "ताजा दैनिक कृषि उपज")}
                     </h2>
                   </div>
 
-                  <div className="flex overflow-x-auto max-w-full gap-1.5 bg-white p-1 rounded-xl border border-slate-200">
-                    {[
-                      { id: "ALL", label: "All" },
-                      { id: "VEGETABLES", label: "Vegetables" },
-                      { id: "FRUITS", label: "Fruits" },
-                      { id: "GRAINS", label: "Grains" },
-                      { id: "SPICES", label: "Spices" },
-                      { id: "DAIRY", label: "Dairy" },
-                    ].map((tab) => (
+                  {/* Mobile-Friendly Category Tabs + Instant Sort & In-Stock Controls */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                    <div className="flex overflow-x-auto max-w-full gap-1 bg-white p-1 rounded-xl border border-slate-200 no-scrollbar">
+                      {[
+                        { id: "ALL", label: "All" },
+                        { id: "VEGETABLES", label: "🥬 Veg" },
+                        { id: "FRUITS", label: "🍎 Fruits" },
+                        { id: "GRAINS", label: "🌾 Grains" },
+                        { id: "SPICES", label: "🌶️ Spices" },
+                        { id: "DAIRY", label: "🍯 Dairy/Oil" },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setSelectedCategory(tab.id)}
+                          className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                            selectedCategory === tab.id
+                              ? "bg-[#14532D] text-white shadow-2xs"
+                              : "text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                        title="Sort produce batches"
+                      >
+                        <option value="FEATURED">✨ Sort: Featured</option>
+                        <option value="PRICE_ASC">💰 Price: Low to High</option>
+                        <option value="PRICE_DESC">💎 Price: High to Low</option>
+                        <option value="STOCK_DESC">📦 Stock: High to Low</option>
+                      </select>
+
                       <button
-                        key={tab.id}
-                        onClick={() => setSelectedCategory(tab.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                          selectedCategory === tab.id
-                            ? "bg-[#14532D] text-white"
-                            : "text-slate-600 hover:bg-slate-100"
+                        type="button"
+                        onClick={() => setInStockOnly(!inStockOnly)}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition cursor-pointer ${
+                          inStockOnly
+                            ? "bg-emerald-50 border-emerald-500 text-[#14532D]"
+                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        {tab.label}
+                        {inStockOnly ? "✓ In Stock" : "In Stock Only"}
                       </button>
-                    ))}
+                    </div>
                   </div>
                 </div>
 
@@ -1875,6 +2101,8 @@ export default function App() {
                         setSelectedCategory("ALL");
                         setSelectedDistrict("ALL");
                         setSearchQuery("");
+                        setSortBy("FEATURED");
+                        setInStockOnly(false);
                       }}
                       className="px-4 py-2 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
                     >
@@ -1882,13 +2110,19 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+                  /* Daraz-Style 2-Column Mobile Grid (grid-cols-2 on phones, 3-col on desktop) */
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-6">
                     {filteredProducts.map((p) => {
                       const imgUrl = getProductImage(p);
+                      const stockNum = Number(p.stock_quantity || 0);
+                      const isLowStock = stockNum > 0 && stockNum <= 35;
+                      const basketItem = basket.find((item) => item.id === p.id);
+                      const qtyInBasket = basketItem ? basketItem.qty : 0;
+
                       return (
                         <div
                           key={p.id}
-                          className="bg-white rounded-3xl p-3.5 border border-slate-200/90 shadow-xs hover:shadow-lg transition flex flex-col justify-between"
+                          className="bg-white rounded-2xl sm:rounded-3xl p-2.5 sm:p-3.5 border border-slate-200/90 shadow-2xs hover:shadow-xl hover:-translate-y-0.5 transition duration-200 flex flex-col justify-between"
                         >
                           <div>
                             <div
@@ -1896,30 +2130,47 @@ export default function App() {
                                 setQuickViewProduct(p);
                                 setQuickViewQty(1);
                               }}
-                              className="relative h-48 sm:h-52 rounded-2xl overflow-hidden mb-3.5 cursor-pointer group"
+                              className="relative h-36 sm:h-52 rounded-xl sm:rounded-2xl overflow-hidden mb-2.5 sm:mb-3.5 cursor-pointer group bg-slate-100"
                             >
                               <img
                                 src={imgUrl}
                                 alt={p.name}
+                                loading="lazy"
                                 className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                               />
-                              <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-white/95 text-slate-800 text-[11px] font-bold flex items-center gap-1 shadow-xs">
-                                <MapPin className="w-3 h-3 text-emerald-700" />
-                                {p.origin_location || "Nepal Farm"}
+                              <span className="absolute top-2 left-2 sm:top-3 sm:left-3 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-white/95 text-slate-800 text-[9px] sm:text-[11px] font-bold flex items-center gap-1 shadow-xs max-w-[75%] truncate">
+                                <MapPin className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-emerald-700 shrink-0" />
+                                <span className="truncate">{p.origin_location || "Nepal Farm"}</span>
                               </span>
-                              <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-emerald-700 text-white text-[10px] font-bold shadow-xs">
-                                {Number(p.stock_quantity) > 0
-                                  ? `${p.stock_quantity} ${p.unit} Left`
-                                  : "Out of Stock"}
+                              <span
+                                className={`absolute bottom-2 right-2 sm:top-3 sm:bottom-auto sm:right-3 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-white text-[9px] sm:text-[10px] font-bold shadow-xs ${
+                                  stockNum <= 0
+                                    ? "bg-red-600"
+                                    : isLowStock
+                                    ? "bg-amber-600"
+                                    : "bg-emerald-700"
+                                }`}
+                              >
+                                {stockNum > 0
+                                  ? isLowStock
+                                    ? `🔥 ${p.stock_quantity} ${p.unit} Left`
+                                    : `${p.stock_quantity} ${p.unit} Left`
+                                  : "Sold Out"}
                               </span>
+                              {qtyInBasket > 0 && (
+                                <span className="absolute top-2 right-2 sm:bottom-2 sm:top-auto sm:left-3 sm:right-auto px-2 py-0.5 rounded-full bg-[#14532D] text-amber-300 text-[9px] sm:text-[10px] font-black shadow-xs">
+                                  ✓ {qtyInBasket} {p.unit} in Basket
+                                </span>
+                              )}
                             </div>
 
-                            <div className="px-1.5 space-y-1.5">
-                              <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                <span className="flex items-center gap-1 font-medium text-emerald-800">
-                                  <User className="w-3.5 h-3.5" /> Verified Grower
+                            <div className="px-0.5 sm:px-1.5 space-y-1 sm:space-y-1.5">
+                              <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-slate-500">
+                                <span className="flex items-center gap-1 font-semibold text-emerald-800 truncate">
+                                  <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 text-emerald-600" />
+                                  <span className="truncate">Verified Farm</span>
                                 </span>
-                                <span className="uppercase font-bold text-[10px] text-slate-400">
+                                <span className="uppercase font-bold text-[9px] sm:text-[10px] text-slate-400 hidden sm:inline">
                                   {p.category}
                                 </span>
                               </div>
@@ -1929,51 +2180,75 @@ export default function App() {
                                   setQuickViewProduct(p);
                                   setQuickViewQty(1);
                                 }}
-                                className="font-extrabold text-base text-slate-900 hover:text-[#14532D] cursor-pointer"
+                                className="font-extrabold text-xs sm:text-base text-slate-900 hover:text-[#14532D] cursor-pointer line-clamp-1 sm:line-clamp-2 leading-snug"
                               >
                                 {p.name}
                               </h3>
-                              <p className="text-xs text-slate-500 line-clamp-2">
+                              <p className="text-[10px] sm:text-xs text-slate-500 line-clamp-1 sm:line-clamp-2">
                                 {p.description}
                               </p>
 
-                              <div className="pt-2 flex items-center justify-between">
+                              <div className="pt-1 sm:pt-2 flex items-baseline justify-between gap-1">
                                 <div>
-                                  <span className="text-xl font-black text-slate-900">
+                                  <span className="text-sm sm:text-xl font-black text-[#14532D] sm:text-slate-900">
                                     रु {p.price}
                                   </span>
-                                  <span className="text-xs text-slate-500"> / {p.unit}</span>
+                                  <span className="text-[10px] sm:text-xs text-slate-500">
+                                    /{p.unit}
+                                  </span>
                                 </div>
-                                <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
-                                  Direct Farm Rate
+                                <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                  Direct Rate
                                 </span>
                               </div>
                             </div>
                           </div>
 
-                          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
-                            <button
-                              disabled={Number(p.stock_quantity) <= 0}
-                              onClick={() => handleAddToBasket(p, 1)}
-                              className="flex-1 py-2.5 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
-                            >
-                              <ShoppingBag className="w-3.5 h-3.5" />
-                              {Number(p.stock_quantity) > 0 ? "Add to Basket" : "Sold Out"}
-                            </button>
+                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex items-center gap-1.5 sm:gap-2">
+                            {qtyInBasket > 0 ? (
+                              <div className="flex-1 flex items-center justify-between bg-emerald-50 border border-emerald-300 rounded-xl p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateBasketQty(p.id, -1)}
+                                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-white hover:bg-slate-100 text-slate-800 font-black text-xs flex items-center justify-center shadow-2xs cursor-pointer"
+                                >
+                                  <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                                </button>
+                                <span className="text-[11px] sm:text-xs font-black text-[#14532D]">
+                                  {qtyInBasket} {p.unit}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddToBasket(p, 1)}
+                                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#14532D] hover:bg-[#1B4332] text-white font-black text-xs flex items-center justify-center shadow-2xs cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                disabled={stockNum <= 0}
+                                onClick={() => handleAddToBasket(p, 1)}
+                                className="flex-1 py-2 sm:py-2.5 px-2.5 sm:px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                              >
+                                <ShoppingBag className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                                <span>{stockNum > 0 ? "Add" : "Sold Out"}</span>
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 setQuickViewProduct(p);
                                 setQuickViewQty(1);
                               }}
-                              className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
+                              className="p-2 sm:p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
                               title="Quick View Details"
                             >
-                              <Eye className="w-4 h-4" />
+                              <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </button>
                             {!isAdmin && (
                               <button
                                 onClick={() => requireAuth(() => setChatDrawerOpen(true))}
-                                className="p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
+                                className="hidden sm:flex p-2.5 rounded-xl border border-slate-200 text-slate-500 hover:text-[#14532D] hover:border-[#14532D] transition cursor-pointer"
                                 title="Ask Admin about this batch"
                               >
                                 <MessageCircle className="w-4 h-4" />
@@ -3160,6 +3435,34 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* DARAZ-STYLE FLOATING MOBILE MINI-BASKET BAR (VISIBLE WHEN ITEMS ARE IN BASKET) */}
+      {totalBasketItems > 0 && !basketDrawerOpen && activeTab !== "admin" && (
+        <div className="md:hidden fixed bottom-16 inset-x-3 z-40">
+          <button
+            type="button"
+            onClick={() => setBasketDrawerOpen(true)}
+            className="w-full py-3 px-4 rounded-2xl bg-[#14532D] text-white shadow-xl border border-emerald-500/40 flex items-center justify-between cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="w-6 h-6 rounded-full bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center">
+                {totalBasketItems}
+              </span>
+              <div className="text-left">
+                <p className="text-xs font-extrabold leading-tight">
+                  View Basket • रु {basketTotal.toLocaleString()}
+                </p>
+                <p className="text-[10px] text-emerald-200">
+                  Direct Farm Rate • Tap to Checkout
+                </p>
+              </div>
+            </div>
+            <span className="px-3 py-1.5 rounded-xl bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1">
+              Checkout <ArrowRight className="w-3.5 h-3.5" />
+            </span>
+          </button>
         </div>
       )}
 
