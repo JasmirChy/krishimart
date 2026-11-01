@@ -37,6 +37,19 @@ export default function AdminPanel() {
   const [userSearch, setUserSearch] = useState("");
   const [userFilter, setUserFilter] = useState("ALL");
 
+  // Search & Filter states across all Admin tabs
+  const [orderSearch, setOrderSearch] = useState("");
+  const [adminOrderFilter, setAdminOrderFilter] = useState("ALL"); // "ALL" | "PENDING" | "CONFIRMED" | "DELIVERED" | "CANCELLED"
+  const [adminOrderSort, setAdminOrderSort] = useState("NEWEST");
+
+  const [subSearch, setSubSearch] = useState("");
+  const [subFilter, setSubFilter] = useState("ALL"); // "ALL" | "PENDING" | "BOUGHT" | "APPROVED" | "REJECTED"
+
+  const [purchaseSearch, setPurchaseSearch] = useState("");
+  const [purchaseFilter, setPurchaseFilter] = useState("ALL"); // "ALL" | "PENDING" | "PAID"
+
+  const [storyFilter, setStoryFilter] = useState("ALL"); // "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "FARMER_STORY" | "BUYER_REVIEW" 
+
   // Admin Chat state
   const [threads, setThreads] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -1121,20 +1134,60 @@ const handleOrderStatus = async (orderId, status) => {
                   onChange={(e) => setUserSearch(e.target.value)}
                   className="flex-1 min-w-[200px] px-3.5 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-[#1B4332]"
                 />
-                {["ALL", "PENDING", "VERIFIED", "FARMER", "CUSTOMER"].map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => setUserFilter(f)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
-                      userFilter === f
-                        ? "bg-[#1B4332] text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {f}
-                  </button>
-                ))}
+                {[
+                  { id: "ALL", label: "All Users", count: users.length },
+                  {
+                    id: "PENDING",
+                    label: "⏳ Unverified",
+                    count: users.filter((u) => !u.is_admin_verified && !u.is_staff).length,
+                    highlight: true,
+                  },
+                  {
+                    id: "VERIFIED",
+                    label: "✓ Verified",
+                    count: users.filter((u) => u.is_admin_verified || u.is_staff).length,
+                  },
+                  {
+                    id: "FARMER",
+                    label: "🌾 Farmers",
+                    count: users.filter((u) => u.role === "FARMER").length,
+                  },
+                  {
+                    id: "CUSTOMER",
+                    label: "🛒 Buyers",
+                    count: users.filter((u) => u.role === "CUSTOMER").length,
+                  },
+                  {
+                    id: "ADMIN",
+                    label: "🛡️ Admins",
+                    count: users.filter((u) => u.role === "ADMIN" || u.is_staff).length,
+                  },
+                ].map((tab) => {
+                  const active = userFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setUserFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                        active
+                          ? "bg-[#1B4332] text-white shadow-2xs"
+                          : tab.highlight && tab.count > 0
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          active ? "bg-amber-400 text-slate-950" : "bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1152,6 +1205,7 @@ const handleOrderStatus = async (orderId, status) => {
                   if (userFilter === "VERIFIED") return u.is_admin_verified || u.is_staff;
                   if (userFilter === "FARMER") return u.role === "FARMER";
                   if (userFilter === "CUSTOMER") return u.role === "CUSTOMER";
+                  if (userFilter === "ADMIN") return u.role === "ADMIN" || Boolean(u.is_staff);
                   return true;
                 })
                 .map((u) => (
@@ -1232,15 +1286,103 @@ const handleOrderStatus = async (orderId, status) => {
         </div>
       )}
 
-      {/* 2. FARMER OFFERS TAB ("BUY FROM FARMER") */}
-      {subTab === "submissions" && (
-        <div className="grid md:grid-cols-2 gap-6">
-          {submissions.length === 0 ? (
-            <div className="col-span-2 bg-white p-12 rounded-2xl text-center text-slate-500 border border-slate-200">
-              No farmer wholesale crop offers submitted yet.
+      {/* 2. FARMER OFFERS TAB ("BUY FROM FARMER") WITH SEARCH & STATUS FILTER PILLS */}
+      {subTab === "submissions" && (() => {
+        const subCounts = {
+          ALL: submissions.length,
+          PENDING: submissions.filter((s) => s.status === "PENDING").length,
+          APPROVED: submissions.filter((s) => s.status === "APPROVED").length,
+          BOUGHT: submissions.filter((s) => s.status === "BOUGHT").length,
+          REJECTED: submissions.filter((s) => s.status === "REJECTED").length,
+        };
+
+        const displayedSubmissions = submissions.filter((sub) => {
+          const q = subSearch.toLowerCase();
+          const matchesSearch =
+            (sub.vegetable_name || "").toLowerCase().includes(q) ||
+            (sub.seller_name || "").toLowerCase().includes(q) ||
+            (sub.pickup_location || "").toLowerCase().includes(q) ||
+            (sub.contact_phone || "").includes(subSearch) ||
+            (sub.category || "").toLowerCase().includes(q);
+
+          const matchesStatus = subFilter === "ALL" || sub.status === subFilter;
+          return matchesSearch && matchesStatus;
+        });
+
+        return (
+          <div className="space-y-4">
+            {/* Search & Filter Bar */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-2xs">
+              <div className="relative flex-1 max-w-md">
+                <input
+                  type="text"
+                  placeholder="Search offers by crop, farmer name, pickup location..."
+                  value={subSearch}
+                  onChange={(e) => setSubSearch(e.target.value)}
+                  className="w-full px-3.5 py-2 pl-9 border border-slate-200 rounded-xl text-xs outline-none focus:border-[#1B4332] bg-slate-50 focus:bg-white"
+                />
+                <span className="absolute left-3 top-2.5 text-slate-400 text-xs">🔍</span>
+                {subSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setSubSearch("")}
+                    className="absolute right-3 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 overflow-x-auto no-scrollbar">
+                {[
+                  { id: "ALL", label: "All Offers", count: subCounts.ALL },
+                  {
+                    id: "PENDING",
+                    label: "⏳ Pending Review",
+                    count: subCounts.PENDING,
+                    highlight: true,
+                  },
+                  { id: "BOUGHT", label: "✓ Procured", count: subCounts.BOUGHT },
+                  { id: "APPROVED", label: "Approved", count: subCounts.APPROVED },
+                  { id: "REJECTED", label: "✕ Declined", count: subCounts.REJECTED },
+                ].map((tab) => {
+                  const active = subFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setSubFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                        active
+                          ? "bg-[#1B4332] text-white shadow-2xs"
+                          : tab.highlight && tab.count > 0
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          active ? "bg-amber-400 text-slate-950" : "bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          ) : (
-            submissions.map((sub) => (
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {displayedSubmissions.length === 0 ? (
+                <div className="col-span-2 bg-white p-12 rounded-2xl text-center text-slate-500 border border-slate-200">
+                  {submissions.length === 0
+                    ? "No farmer wholesale crop offers submitted yet."
+                    : "No crop offers match your current filter."}
+                </div>
+              ) : (
+                displayedSubmissions.map((sub) => (
               <div
                 key={sub.id}
                 className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4"
@@ -1390,12 +1532,96 @@ const handleOrderStatus = async (orderId, status) => {
             ))
           )}
         </div>
-      )}
+        </div>
+        );
+      })()}
 
-      {/* 3. BOUGHT FROM FARMERS LEDGER TAB */}
-      {subTab === "purchases" && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+      {/* 3. BOUGHT FROM FARMERS LEDGER TAB WITH SEARCH & SETTLEMENT FILTERS */}
+      {subTab === "purchases" && (() => {
+        const purchaseCounts = {
+          ALL: purchases.length,
+          PENDING: purchases.filter((p) => p.payment_status === "PENDING").length,
+          PAID: purchases.filter((p) => p.payment_status === "PAID").length,
+        };
+
+        const displayedPurchases = purchases.filter((p) => {
+          const q = purchaseSearch.toLowerCase();
+          const matchesSearch =
+            (p.crop_name || "").toLowerCase().includes(q) ||
+            (p.farmer_name || "").toLowerCase().includes(q) ||
+            (p.farmer_phone || "").includes(purchaseSearch) ||
+            (p.pickup_location || "").toLowerCase().includes(q) ||
+            String(p.id).includes(purchaseSearch);
+
+          const matchesStatus =
+            purchaseFilter === "ALL" || p.payment_status === purchaseFilter;
+          return matchesSearch && matchesStatus;
+        });
+
+        return (
+          <div className="space-y-4">
+            {/* Search & Payout Settlement Filter Pills */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-2xs">
+              <div className="relative flex-1 max-w-md">
+                <input
+                  type="text"
+                  placeholder="Search ledger by voucher #, crop name, farmer name..."
+                  value={purchaseSearch}
+                  onChange={(e) => setPurchaseSearch(e.target.value)}
+                  className="w-full px-3.5 py-2 pl-9 border border-slate-200 rounded-xl text-xs outline-none focus:border-[#1B4332] bg-slate-50 focus:bg-white"
+                />
+                <span className="absolute left-3 top-2.5 text-slate-400 text-xs">🔍</span>
+                {purchaseSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setPurchaseSearch("")}
+                    className="absolute right-3 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: "ALL", label: "All Vouchers", count: purchaseCounts.ALL },
+                  {
+                    id: "PENDING",
+                    label: "⏳ Pending Settlement",
+                    count: purchaseCounts.PENDING,
+                    highlight: true,
+                  },
+                  { id: "PAID", label: "✓ Settled (PAID)", count: purchaseCounts.PAID },
+                ].map((tab) => {
+                  const active = purchaseFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setPurchaseFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                        active
+                          ? "bg-[#1B4332] text-white shadow-2xs"
+                          : tab.highlight && tab.count > 0
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          active ? "bg-amber-400 text-slate-950" : "bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-extrabold text-slate-900">
                 Official Farmer Procurement Ledger ({purchases.length} Transactions)
@@ -1457,13 +1683,15 @@ const handleOrderStatus = async (orderId, status) => {
             </div>
           </div>
 
-          {purchases.length === 0 ? (
+          {displayedPurchases.length === 0 ? (
             <div className="bg-white rounded-3xl p-12 text-center text-slate-500 border border-slate-200">
-              No crops bought from farmers yet. Click "Buy from Farmer" on any offer to procure.
+              {purchases.length === 0
+                ? "No crops bought from farmers yet. Click 'Buy from Farmer' on any offer to procure."
+                : "No purchase vouchers match your current filter."}
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {purchases.map((p) => (
+              {displayedPurchases.map((p) => (
                 <div
                   key={p.id}
                   className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3 flex flex-col justify-between"
@@ -1561,32 +1789,91 @@ const handleOrderStatus = async (orderId, status) => {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
-      {/* 4. STORIES & REVIEWS MODERATION TAB */}
-      {subTab === "stories" && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 flex flex-wrap justify-between items-center gap-3">
-            <div>
-              <h3 className="text-lg font-extrabold text-slate-900">
-                Farmer Stories & Buyer Reviews ({stories.length})
-              </h3>
-              <p className="text-xs text-slate-500">
-                Approve genuine farmer stories and buyer reviews to publish them on the website.
-              </p>
+      {/* 4. STORIES & REVIEWS MODERATION TAB WITH FILTER PILLS */}
+      {subTab === "stories" && (() => {
+        const storyCounts = {
+          ALL: stories.length,
+          PENDING: stories.filter((s) => s.status === "PENDING").length,
+          APPROVED: stories.filter((s) => s.status === "APPROVED").length,
+          REJECTED: stories.filter((s) => s.status === "REJECTED").length,
+          FARMER_STORY: stories.filter((s) => s.story_type === "FARMER_STORY").length,
+          BUYER_REVIEW: stories.filter((s) => s.story_type === "BUYER_REVIEW").length,
+        };
+
+        const displayedStories = stories.filter((s) => {
+          if (storyFilter === "ALL") return true;
+          if (storyFilter === "FARMER_STORY" || storyFilter === "BUYER_REVIEW") {
+            return s.story_type === storyFilter;
+          }
+          return s.status === storyFilter;
+        });
+
+        return (
+          <div className="space-y-4">
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-2xs">
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  Farmer Stories & Buyer Reviews ({stories.length})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Approve genuine farmer stories and buyer reviews to publish them on the website.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: "ALL", label: "All Items", count: storyCounts.ALL },
+                  {
+                    id: "PENDING",
+                    label: "⏳ Pending",
+                    count: storyCounts.PENDING,
+                    highlight: true,
+                  },
+                  { id: "APPROVED", label: "✓ Approved", count: storyCounts.APPROVED },
+                  { id: "REJECTED", label: "✕ Rejected", count: storyCounts.REJECTED },
+                  { id: "FARMER_STORY", label: "🌾 Farmers", count: storyCounts.FARMER_STORY },
+                  { id: "BUYER_REVIEW", label: "🛒 Buyers", count: storyCounts.BUYER_REVIEW },
+                ].map((tab) => {
+                  const active = storyFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setStoryFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                        active
+                          ? "bg-[#1B4332] text-white shadow-2xs"
+                          : tab.highlight && tab.count > 0
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          active ? "bg-amber-400 text-slate-950" : "bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
-              {pendingStoriesCount} Pending Moderation
-            </span>
-          </div>
 
-          {stories.length === 0 ? (
+          {displayedStories.length === 0 ? (
             <div className="bg-white rounded-3xl p-12 text-center text-slate-500 border border-slate-200">
-              No stories or buyer reviews submitted yet.
+              {stories.length === 0
+                ? "No stories or buyer reviews submitted yet."
+                : "No items match your current moderation filter."}
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 gap-4">
-              {stories.map((st) => (
+              {displayedStories.map((st) => (
                 <div
                   key={st.id}
                   className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3 flex flex-col justify-between"
@@ -1697,7 +1984,8 @@ const handleOrderStatus = async (orderId, status) => {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* 5. STORE INVENTORY TAB */}
       {/* 5. STORE INVENTORY TAB */}
@@ -1903,58 +2191,181 @@ const handleOrderStatus = async (orderId, status) => {
         </div>
       )}
 
-      {/* 6. CUSTOMER ORDERS TAB */}
-      {subTab === "orders" && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 divide-y divide-slate-100">
-          <div className="p-4 bg-slate-50 flex flex-wrap justify-between items-center gap-3">
-            <h3 className="font-bold text-sm text-slate-900">
-              Live Customer Orders ({orders.length})
-            </h3>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() =>
-                  handleExportCSV(
-                    `KrishiMart_Customer_Orders_${new Date().toISOString().slice(0, 10)}.csv`,
-                    [
-                      "Order ID",
-                      "Date",
-                      "Customer Name",
-                      "Contact Phone",
-                      "Produce Item",
-                      "Quantity",
-                      "Unit",
-                      "Total Payable (NPR)",
-                      "Status",
-                      "Delivery Address",
-                    ],
-                    orders.map((o) => [
-                      `#KM-ORD-${o.id}`,
-                      new Date(o.created_at).toLocaleDateString(),
-                      o.buyer_name,
-                      o.contact_phone,
-                      o.product_name,
-                      o.quantity,
-                      o.product_unit,
-                      o.total_price,
-                      o.status,
-                      o.delivery_address,
-                    ])
-                  )
-                }
-                className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold transition cursor-pointer"
-              >
-                📊 Export Orders (.CSV / Excel)
-              </button>
-              <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Auto-syncing
-              </span>
+      {/* 6. CUSTOMER ORDERS TAB WITH SEARCH, STATUS FILTER PILLS & SORT */}
+      {subTab === "orders" && (() => {
+        const orderCounts = {
+          ALL: orders.length,
+          PENDING: orders.filter((o) => o.status === "PENDING").length,
+          CONFIRMED: orders.filter((o) => o.status === "CONFIRMED").length,
+          DELIVERED: orders.filter((o) => o.status === "DELIVERED").length,
+          CANCELLED: orders.filter((o) => o.status === "CANCELLED").length,
+        };
+
+        const displayedOrders = orders
+          .filter((o) => {
+            const q = orderSearch.toLowerCase();
+            const matchesSearch =
+              String(o.id).includes(orderSearch) ||
+              (o.buyer_name || "").toLowerCase().includes(q) ||
+              (o.contact_phone || "").includes(orderSearch) ||
+              (o.product_name || "").toLowerCase().includes(q) ||
+              (o.delivery_address || "").toLowerCase().includes(q);
+
+            const matchesStatus =
+              adminOrderFilter === "ALL" || o.status === adminOrderFilter;
+            return matchesSearch && matchesStatus;
+          })
+          .sort((a, b) => {
+            if (adminOrderSort === "NEWEST") return Number(b.id) - Number(a.id);
+            if (adminOrderSort === "OLDEST") return Number(a.id) - Number(b.id);
+            if (adminOrderSort === "PRICE_DESC") return Number(b.total_price || 0) - Number(a.total_price || 0);
+            if (adminOrderSort === "PRICE_ASC") return Number(a.total_price || 0) - Number(b.total_price || 0);
+            return 0;
+          });
+
+        return (
+          <div className="space-y-4">
+            {/* Search, Filter Pills & Export Bar */}
+            <div className="bg-white p-4 sm:p-5 rounded-3xl shadow-sm border border-slate-200 space-y-3.5">
+              <div className="flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <h3 className="font-extrabold text-base sm:text-lg text-slate-900">
+                    Live Customer Orders ({orders.length})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Search orders, filter by status, apply discount in receipt, or print 1/4 A4 dispatch slips.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleExportCSV(
+                        `KrishiMart_Customer_Orders_${new Date().toISOString().slice(0, 10)}.csv`,
+                        [
+                          "Order ID",
+                          "Date",
+                          "Customer Name",
+                          "Contact Phone",
+                          "Produce Item",
+                          "Quantity",
+                          "Unit",
+                          "Total Payable (NPR)",
+                          "Status",
+                          "Delivery Address",
+                        ],
+                        displayedOrders.map((o) => [
+                          `#KM-ORD-${o.id}`,
+                          new Date(o.created_at).toLocaleDateString(),
+                          o.buyer_name,
+                          o.contact_phone,
+                          o.product_name,
+                          o.quantity,
+                          o.product_unit,
+                          o.total_price,
+                          o.status,
+                          o.delivery_address,
+                        ])
+                      )
+                    }
+                    className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold transition cursor-pointer"
+                  >
+                    📊 Export (.CSV / Excel)
+                  </button>
+                  <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Auto-syncing
+                  </span>
+                </div>
+              </div>
+
+              {/* Search & Sort Controls */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 pt-1">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Search orders by Order #, buyer name, phone, produce, or address..."
+                    value={orderSearch}
+                    onChange={(e) => setOrderSearch(e.target.value)}
+                    className="w-full px-3.5 py-2 pl-9 border border-slate-200 rounded-xl text-xs outline-none focus:border-[#1B4332] bg-slate-50 focus:bg-white"
+                  />
+                  <span className="absolute left-3 top-2.5 text-slate-400 text-xs">🔍</span>
+                  {orderSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderSearch("")}
+                      className="absolute right-3 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={adminOrderSort}
+                    onChange={(e) => setAdminOrderSort(e.target.value)}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold bg-white text-slate-700 outline-none cursor-pointer"
+                  >
+                    <option value="NEWEST">⚡ Newest Order First</option>
+                    <option value="OLDEST">⏳ Oldest Order First</option>
+                    <option value="PRICE_DESC">💰 Amount: High to Low</option>
+                    <option value="PRICE_ASC">💵 Amount: Low to High</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Status Filter Pills with Live Badges */}
+              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+                {[
+                  { id: "ALL", label: "All Orders", count: orderCounts.ALL },
+                  {
+                    id: "PENDING",
+                    label: "⏳ Pending Confirmation",
+                    count: orderCounts.PENDING,
+                    highlight: true,
+                  },
+                  { id: "CONFIRMED", label: "Packing / Confirmed", count: orderCounts.CONFIRMED },
+                  { id: "DELIVERED", label: "✓ Delivered", count: orderCounts.DELIVERED },
+                  { id: "CANCELLED", label: "✕ Cancelled", count: orderCounts.CANCELLED },
+                ].map((tab) => {
+                  const active = adminOrderFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setAdminOrderFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                        active
+                          ? "bg-[#1B4332] text-white shadow-2xs"
+                          : tab.highlight && tab.count > 0
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          active ? "bg-amber-400 text-slate-950" : "bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-          {orders.length === 0 ? (
-            <p className="p-8 text-center text-slate-500">No customer orders placed yet.</p>
-          ) : (
-            orders.map((o) => (
+
+            {/* Orders Feed */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden divide-y divide-slate-100">
+              {displayedOrders.length === 0 ? (
+                <p className="p-8 text-center text-slate-500">
+                  {orders.length === 0
+                    ? "No customer orders placed yet."
+                    : "No orders match your search and filter criteria."}
+                </p>
+              ) : (
+                displayedOrders.map((o) => (
               <div
                 key={o.id}
                 className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
@@ -2029,7 +2440,9 @@ const handleOrderStatus = async (orderId, status) => {
             ))
           )}
         </div>
-      )}
+        </div>
+        );
+      })()}
 
       {/* 7. LIVE CHAT INBOX TAB */}
       {subTab === "chat" && (

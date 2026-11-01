@@ -145,6 +145,8 @@ export default function App() {
   const [sortBy, setSortBy] = useState("FEATURED");
   const [inStockOnly, setInStockOnly] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState("ALL");
+  const [farmerSalesFilter, setFarmerSalesFilter] = useState("ALL"); // "ALL" | "PAID" | "PENDING"
+  const [submissionFilter, setSubmissionFilter] = useState("ALL"); // "ALL" | "PENDING" | "BOUGHT" | "REJECTED" 
 
   // Language Toggle ("EN" | "NP")
   const [lang, setLang] = useState("EN");
@@ -1204,123 +1206,240 @@ export default function App() {
           </div>
         )}
 
-        {/* FARMER'S "SOLD TO ADMIN / MANAGER" FINANCIAL REPORT */}
-        {activeTab === "farmer_sales" && isFarmer && (
-          <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+        {/* FARMER'S "SOLD TO ADMIN / MANAGER" FINANCIAL REPORT (ENHANCED UX & SETTLEMENT TRACKER) */}
+        {activeTab === "farmer_sales" && isFarmer && (() => {
+          const totalPaidAmount = farmerSales
+            .filter((s) => s.payment_status === "PAID")
+            .reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+          const totalPendingAmount = farmerSales
+            .filter((s) => s.payment_status !== "PAID")
+            .reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+          const totalEarnings = totalPaidAmount + totalPendingAmount;
+          const paidPercentage =
+            totalEarnings > 0 ? Math.round((totalPaidAmount / totalEarnings) * 100) : 100;
+
+          const salesCounts = {
+            ALL: farmerSales.length,
+            PAID: farmerSales.filter((s) => s.payment_status === "PAID").length,
+            PENDING: farmerSales.filter((s) => s.payment_status !== "PAID").length,
+          };
+
+          const displayedSales =
+            farmerSalesFilter === "ALL"
+              ? farmerSales
+              : farmerSales.filter((s) =>
+                  farmerSalesFilter === "PAID"
+                    ? s.payment_status === "PAID"
+                    : s.payment_status !== "PAID"
+                );
+
+          return (
+          <div className="max-w-6xl mx-auto px-3 sm:px-8 py-5 sm:py-8 space-y-5">
+            {/* Top Header & Offer Crop Action */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-                  Farmer Earnings & Procurement Report
+                <span className="text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                  ● Verified Farmer Financial Ledger & Payouts
                 </span>
-                <h2 className="text-2xl font-black text-slate-900 mt-1">
-                  Crops Sold to KrishiMart Admin
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5">
+                  {tr("Crops Sold to KrishiMart Admin", "कृषि उपज बिक्री तथा भुक्तानी विवरण")}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Official payout ledger of all harvests purchased from you by KrishiMart.
+                  Direct procurement records, settlement statuses, and official 1/4 A4 vouchers.
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setActiveTab("sell")}
-                className="px-4 py-2.5 rounded-xl bg-[#14532D] text-white text-xs font-bold cursor-pointer"
+                className="px-4 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
               >
                 + Offer New Harvest Batch
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">
-                  Total Revenue Earned
+            {/* 4-Card Settlement & Payout Portfolio Breakdown */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4">
+              <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/90 shadow-2xs">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Total Procurement
                 </span>
-                <p className="text-2xl font-black text-[#14532D] mt-1">
-                  रु {totalFarmerEarnings.toLocaleString()}
+                <p className="text-lg sm:text-2xl font-black text-slate-900 mt-0.5">
+                  रु {totalEarnings.toLocaleString()}
                 </p>
-                <span className="text-[11px] text-emerald-700 font-semibold">
-                  Direct farmer payouts
+                <span className="text-[10px] sm:text-[11px] text-slate-500 font-semibold">
+                  {farmerSales.length} harvest vouchers
                 </span>
               </div>
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">
-                  Total Crops Delivered
+
+              <div className="bg-emerald-50/70 p-3.5 sm:p-5 rounded-2xl border border-emerald-200/80 shadow-2xs">
+                <span className="text-[10px] sm:text-xs font-bold text-emerald-700 uppercase tracking-wider">
+                  Settled (PAID)
                 </span>
-                <p className="text-2xl font-black text-slate-900 mt-1">
+                <p className="text-lg sm:text-2xl font-black text-[#14532D] mt-0.5">
+                  रु {totalPaidAmount.toLocaleString()}
+                </p>
+                <span className="text-[10px] sm:text-[11px] text-emerald-700 font-semibold">
+                  ✓ Received via Cash / Bank
+                </span>
+              </div>
+
+              <div className="bg-amber-50/70 p-3.5 sm:p-5 rounded-2xl border border-amber-200/80 shadow-2xs">
+                <span className="text-[10px] sm:text-xs font-bold text-amber-800 uppercase tracking-wider">
+                  Pending Payout
+                </span>
+                <p className="text-lg sm:text-2xl font-black text-amber-700 mt-0.5">
+                  रु {totalPendingAmount.toLocaleString()}
+                </p>
+                <span className="text-[10px] sm:text-[11px] text-amber-800 font-semibold">
+                  ⏳ Awaiting Admin release
+                </span>
+              </div>
+
+              <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/90 shadow-2xs">
+                <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Volume Delivered
+                </span>
+                <p className="text-lg sm:text-2xl font-black text-slate-900 mt-0.5">
                   {totalFarmerWeight.toLocaleString()}{" "}
-                  <span className="text-sm font-normal text-slate-500">units</span>
+                  <span className="text-xs font-normal text-slate-500">units</span>
                 </p>
-                <span className="text-[11px] text-slate-500 font-semibold">
-                  Collected by KrishiMart
-                </span>
-              </div>
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-                <span className="text-xs font-bold text-slate-400 uppercase">
-                  Successful Batches Sold
-                </span>
-                <p className="text-2xl font-black text-slate-900 mt-1">{farmerSales.length}</p>
-                <span className="text-[11px] text-emerald-700 font-semibold">
-                  Verified transactions
+                <span className="text-[10px] sm:text-[11px] text-emerald-700 font-semibold">
+                  Collected by Hub
                 </span>
               </div>
             </div>
 
-            {farmerSales.length === 0 ? (
-              <div className="bg-white rounded-3xl p-12 text-center text-slate-500 border border-slate-200">
-                No crops have been purchased by the Admin yet. Submit your harvest under "Sell Your
-                Harvest"!
+            {/* Visual Settlement Progress Bar */}
+            {totalEarnings > 0 && (
+              <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="text-slate-700 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" />
+                    Overall Payout Settlement Rate
+                  </span>
+                  <span className="text-[#14532D] font-black">{paidPercentage}% Settled</span>
+                </div>
+                <div className="w-full h-3 rounded-full bg-slate-100 overflow-hidden flex">
+                  <div
+                    className="h-full bg-emerald-600 transition-all duration-500 rounded-full"
+                    style={{ width: `${paidPercentage}%` }}
+                    title={`Paid: रु ${totalPaidAmount.toLocaleString()}`}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                  <span>रु {totalPaidAmount.toLocaleString()} Settled</span>
+                  <span>रु {totalPendingAmount.toLocaleString()} Remaining</span>
+                </div>
+              </div>
+            )}
+
+            {/* 1-Tap Filter Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {[
+                { id: "ALL", label: "All Vouchers", count: salesCounts.ALL },
+                { id: "PAID", label: "✓ Settled (PAID)", count: salesCounts.PAID },
+                { id: "PENDING", label: "⏳ Pending Payout", count: salesCounts.PENDING },
+              ].map((tab) => {
+                const active = farmerSalesFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setFarmerSalesFilter(tab.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                      active
+                        ? "bg-[#14532D] text-white shadow-xs"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                        active ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {displayedSales.length === 0 ? (
+              <div className="bg-white rounded-3xl p-10 text-center text-slate-500 border border-slate-200 space-y-2">
+                <Receipt className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">
+                  {farmerSalesFilter === "ALL"
+                    ? "No crops have been purchased by the Admin yet."
+                    : `No ${farmerSalesFilter.toLowerCase()} vouchers found.`}
+                </p>
+                <p className="text-xs text-slate-400">
+                  Submit your harvest under "Sell Your Harvest" to start receiving wholesale payouts!
+                </p>
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 gap-4">
-                {farmerSales.map((s) => (
+                {displayedSales.map((s) => (
                   <div
                     key={s.id}
-                    className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3"
+                    className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:shadow-md transition space-y-3"
                   >
-                    <div className="flex items-start justify-between">
+                    <div className="flex items-start justify-between gap-2">
                       <div>
-                        <span className="text-[10px] font-bold text-emerald-700 uppercase">
+                        <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
                           {s.category}
                         </span>
                         <h3 className="font-extrabold text-base text-slate-900">{s.crop_name}</h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-[11px] text-slate-400">
                           Sold on {new Date(s.created_at).toLocaleDateString()}
                         </p>
                       </div>
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                        {s.payment_status} ({s.payment_method})
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
+                          s.payment_status === "PAID"
+                            ? "bg-emerald-100 text-[#14532D]"
+                            : "bg-amber-100 text-amber-900"
+                        }`}
+                      >
+                        {s.payment_status === "PAID" ? "✓ PAID" : "⏳ PENDING"} ({s.payment_method})
                       </span>
                     </div>
-                    <div className="p-3 bg-slate-50 rounded-2xl text-xs space-y-1">
-                      <div className="flex justify-between">
-                        <span>Quantity Sold:</span>
-                        <strong>
+
+                    <div className="p-3 bg-slate-50/90 rounded-2xl text-xs space-y-1.5 border border-slate-100">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Quantity Procured:</span>
+                        <strong className="text-slate-900">
                           {s.quantity} {s.unit}
                         </strong>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Agreed Wholesale Rate:</span>
-                        <strong>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Agreed Rate:</span>
+                        <strong className="text-slate-900">
                           रु {s.agreed_wholesale_rate} / {s.unit}
                         </strong>
                       </div>
-                      <div className="flex justify-between border-t border-slate-200 pt-1 text-sm font-black text-[#14532D]">
-                        <span>Total Payout Received:</span>
-                        <span>रु {s.total_amount}</span>
+                      <div className="flex justify-between border-t border-slate-200/80 pt-1.5 text-sm font-black text-[#14532D]">
+                        <span>Total Farmer Payout:</span>
+                        <span>रु {Number(s.total_amount).toLocaleString()}</span>
                       </div>
                     </div>
+
                     {s.admin_notes && (
-                      <p className="text-xs bg-emerald-50 p-2.5 rounded-xl text-emerald-950 border border-emerald-100">
-                        <strong>Admin Receipt Note:</strong> {s.admin_notes}
+                      <p className="text-xs bg-emerald-50/70 p-2.5 rounded-xl text-emerald-950 border border-emerald-100 leading-snug">
+                        <strong>Admin Note:</strong> {s.admin_notes}
                       </p>
                     )}
+
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-400">
-                        Voucher #{s.id}
+                      <span className="text-[11px] font-extrabold text-slate-400">
+                        Voucher #KM-PUR-{s.id}
                       </span>
                       <button
                         type="button"
                         onClick={() => setActiveSlip({ ...s, slipType: "FARMER_SALE" })}
-                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                       >
-                        <Receipt className="w-3.5 h-3.5" /> View / Print 1/4 A4 Slip
+                        <Receipt className="w-3.5 h-3.5" /> 🖨️ 1/4 A4 Slip
                       </button>
                     </div>
                   </div>
@@ -1328,7 +1447,8 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* DEDICATED "SELL YOUR HARVEST" PORTAL (FARMERS ONLY) */}
         {activeTab === "sell" && isFarmer && (
@@ -1547,59 +1667,177 @@ export default function App() {
                   </div>
                 </div>
 
-                <h3 className="text-lg font-bold text-slate-900">
-                  Your Submitted Harvest Batches ({mySubmissions.length})
-                </h3>
-                {mySubmissions.length === 0 ? (
-                  <div className="bg-white rounded-2xl p-6 text-center text-xs text-slate-500 border border-slate-200">
-                    No harvest batches submitted yet.
-                  </div>
-                ) : (
-                  mySubmissions.map((s) => (
-                    <div
-                      key={s.id}
-                      className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 space-y-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <h4 className="font-bold text-slate-900">{s.vegetable_name}</h4>
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                              s.status === "BOUGHT"
-                                ? "bg-emerald-600 text-white"
-                                : s.status === "APPROVED"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : s.status === "REJECTED"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-amber-100 text-amber-800"
-                            }`}
-                          >
-                            {s.status === "BOUGHT" ? "✓ BOUGHT BY ADMIN" : s.status}
-                          </span>
-                          {s.status === "PENDING" && (
+                {/* Enhanced Wholesale Harvest Batches & Status Stepper */}
+                {(() => {
+                  const subCounts = {
+                    ALL: mySubmissions.length,
+                    PENDING: mySubmissions.filter((s) => s.status === "PENDING").length,
+                    BOUGHT: mySubmissions.filter((s) => s.status === "BOUGHT" || s.status === "APPROVED").length,
+                    REJECTED: mySubmissions.filter((s) => s.status === "REJECTED").length,
+                  };
+
+                  const displayedSubs =
+                    submissionFilter === "ALL"
+                      ? mySubmissions
+                      : mySubmissions.filter((s) =>
+                          submissionFilter === "BOUGHT"
+                            ? s.status === "BOUGHT" || s.status === "APPROVED"
+                            : s.status === submissionFilter
+                        );
+
+                  return (
+                    <div className="space-y-3.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-base sm:text-lg font-black text-slate-900">
+                          Your Submitted Harvest Batches ({mySubmissions.length})
+                        </h3>
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                          {[
+                            { id: "ALL", label: "All", count: subCounts.ALL },
+                            { id: "PENDING", label: "⏳ Pending", count: subCounts.PENDING },
+                            { id: "BOUGHT", label: "✓ Procured", count: subCounts.BOUGHT },
+                            { id: "REJECTED", label: "✕ Declined", count: subCounts.REJECTED },
+                          ].map((tab) => (
                             <button
-                              onClick={() => handleDeleteSubmission(s.id, s.vegetable_name)}
-                              className="p-1 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
-                              title="Withdraw Pending Offer"
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setSubmissionFilter(tab.id)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
+                                submissionFilter === tab.id
+                                  ? "bg-[#14532D] text-white shadow-2xs"
+                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                              }`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              {tab.label} ({tab.count})
                             </button>
-                          )}
+                          ))}
                         </div>
                       </div>
-                      <p className="text-xs text-slate-600">{s.vegetable_description}</p>
-                      <p className="text-xs font-bold text-[#14532D]">
-                        {s.quantity} {s.unit} @ रु {s.expected_price_per_unit}/{s.unit} • 📍{" "}
-                        {s.pickup_location}
-                      </p>
-                      {s.admin_remarks && (
-                        <div className="p-2.5 rounded-xl bg-emerald-50 text-xs text-emerald-900 border border-emerald-100">
-                          <strong>Admin Response:</strong> {s.admin_remarks}
+
+                      {displayedSubs.length === 0 ? (
+                        <div className="bg-white rounded-2xl p-6 text-center text-xs text-slate-500 border border-slate-200">
+                          {submissionFilter === "ALL"
+                            ? "No harvest batches submitted yet."
+                            : `No ${submissionFilter.toLowerCase()} batches found.`}
                         </div>
+                      ) : (
+                        displayedSubs.map((s) => {
+                          const stepIdx =
+                            s.status === "BOUGHT"
+                              ? 3
+                              : s.status === "APPROVED"
+                              ? 2
+                              : s.status === "PENDING"
+                              ? 1
+                              : 0;
+
+                          return (
+                            <div
+                              key={s.id}
+                              className="bg-white rounded-2xl p-4 sm:p-5 shadow-2xs border border-slate-200 space-y-3"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[10px] font-black text-slate-600">
+                                      #KM-SUB-{s.id}
+                                    </span>
+                                    <h4 className="font-extrabold text-base text-slate-900">
+                                      {s.vegetable_name}
+                                    </h4>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mt-0.5">
+                                    {s.quantity} {s.unit} @ रु {s.expected_price_per_unit}/{s.unit} •
+                                    📍 {s.pickup_location}
+                                  </p>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
+                                      s.status === "BOUGHT"
+                                        ? "bg-emerald-600 text-white shadow-2xs"
+                                        : s.status === "APPROVED"
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : s.status === "REJECTED"
+                                        ? "bg-red-100 text-red-700"
+                                        : "bg-amber-100 text-amber-800"
+                                    }`}
+                                  >
+                                    {s.status === "BOUGHT" ? "✓ BOUGHT BY KRISHIMART" : s.status}
+                                  </span>
+                                  {s.status === "PENDING" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSubmission(s.id, s.vegetable_name)}
+                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition"
+                                      title="Withdraw Pending Offer"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <p className="text-xs text-slate-600 leading-relaxed">
+                                {s.vegetable_description}
+                              </p>
+
+                              {s.admin_remarks && (
+                                <div className="p-2.5 rounded-xl bg-emerald-50 text-xs text-emerald-950 border border-emerald-100 leading-snug">
+                                  <strong>Admin Remark:</strong> {s.admin_remarks}
+                                </div>
+                              )}
+
+                              {/* Visual Wholesale 3-Step Lifecycle Tracker */}
+                              {s.status === "REJECTED" ? (
+                                <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3 py-2 text-xs text-red-700 font-semibold flex items-center justify-between">
+                                  <span>✕ Offer was declined by Admin. See remarks above.</span>
+                                  <span className="text-[10px] font-extrabold uppercase">
+                                    Declined
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-2.5">
+                                  <div className="grid grid-cols-3 gap-1.5 text-center">
+                                    {[
+                                      { step: 1, title: "1. Submitted", sub: "Waiting Admin" },
+                                      { step: 2, title: "2. Approved", sub: "Quality Checked" },
+                                      { step: 3, title: "3. Procured (Bought)", sub: "Payout Added" },
+                                    ].map((st) => {
+                                      const done = stepIdx >= st.step;
+                                      const current = stepIdx === st.step;
+                                      return (
+                                        <div key={st.step} className="flex flex-col items-center">
+                                          <div
+                                            className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center transition ${
+                                              done
+                                                ? "bg-[#14532D] text-white shadow-2xs"
+                                                : "bg-slate-200 text-slate-500"
+                                            } ${current ? "ring-2 ring-emerald-300" : ""}`}
+                                          >
+                                            {done ? "✓" : st.step}
+                                          </div>
+                                          <p
+                                            className={`text-[10px] font-extrabold mt-0.5 ${
+                                              done ? "text-[#14532D]" : "text-slate-400"
+                                            }`}
+                                          >
+                                            {st.title}
+                                          </p>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                     </div>
-                  ))
-                )}
+                  );
+                })()}
               </div>
             </div>
           </div>
