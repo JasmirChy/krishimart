@@ -48,7 +48,9 @@ export default function AdminPanel() {
   const [purchaseSearch, setPurchaseSearch] = useState("");
   const [purchaseFilter, setPurchaseFilter] = useState("ALL"); // "ALL" | "PENDING" | "PAID"
 
-  const [storyFilter, setStoryFilter] = useState("ALL"); // "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "FARMER_STORY" | "BUYER_REVIEW" 
+  const [storyFilter, setStoryFilter] = useState("ALL"); // "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "FARMER_STORY" | "BUYER_REVIEW"
+  const [analyticsRange, setAnalyticsRange] = useState("ALL"); // "ALL" | "30D" | "7D" | "TODAY"
+  const [chartMode, setChartMode] = useState("BOTH"); // "BOTH" | "PIE" | "BAR" 
 
   // Admin Chat state (Messenger Inbox)
   const [threads, setThreads] = useState([]);
@@ -106,6 +108,18 @@ export default function AdminPanel() {
       return Number(matchedProd.price) * Number(order.quantity || 1);
     }
     return Number(order.original_subtotal || order.total_price || 0);
+  };
+
+  // Computes exact Net Payable (after Admin discount %) and Discount Amount for financial analytics
+  const getOrderNetFinancials = (order) => {
+    const subtotal = getTrueOrderSubtotal(order);
+    const apiDisc =
+      order?.discount_percent !== undefined ? Number(order.discount_percent || 0) : 0;
+    const localDisc = Number(orderDiscounts[order?.id] ?? 0);
+    const discPct = Math.min(100, Math.max(0, apiDisc > 0 ? apiDisc : localDisc));
+    const discAmt = Number(((subtotal * discPct) / 100).toFixed(2));
+    const netPayable = Number(Math.max(0, subtotal - discAmt).toFixed(2));
+    return { subtotal, discPct, discAmt, netPayable };
   };
 
   // Add Product state
@@ -970,6 +984,12 @@ const handleOrderStatus = async (orderId, status) => {
               label: "Chat Inbox",
               icon: MessageSquare,
               badge: totalUnreadChats,
+            },
+            {
+              id: "analytics",
+              label: "📊 Analytics & Finance",
+              icon: CreditCard,
+              badge: 0,
             },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -2947,6 +2967,798 @@ const handleOrderStatus = async (orderId, status) => {
                     Select a Farmer or Buyer conversation from the left panel to view messages and
                     reply in real time.
                   </p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 8. DEDICATED REAL-TIME FINANCIAL ANALYTICS, PIE CHART & BAR CHART PAGE */}
+      {subTab === "analytics" && (() => {
+        const now = new Date();
+        const isWithinRange = (dateStr) => {
+          if (analyticsRange === "ALL" || !dateStr) return true;
+          const d = new Date(dateStr);
+          if (Number.isNaN(d.getTime())) return true;
+          const diffDays = (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24);
+          if (analyticsRange === "TODAY") {
+            return d.toDateString() === now.toDateString();
+          }
+          if (analyticsRange === "7D") return diffDays <= 7;
+          if (analyticsRange === "30D") return diffDays <= 30;
+          return true;
+        };
+
+        const filteredOrdersForAnalytics = orders.filter((o) => isWithinRange(o.created_at));
+        const filteredPurchasesForAnalytics = purchases.filter((p) => isWithinRange(p.created_at));
+
+        // 1. Calculate Real-Time Income (Customer Orders excluding CANCELLED)
+        const activeOrders = filteredOrdersForAnalytics.filter((o) => o.status !== "CANCELLED");
+        const deliveredOrders = activeOrders.filter((o) => o.status === "DELIVERED");
+        const confirmedOrders = activeOrders.filter((o) => o.status === "CONFIRMED");
+        const pendingOrdersList = activeOrders.filter((o) => o.status === "PENDING");
+        const cancelledOrdersList = filteredOrdersForAnalytics.filter(
+          (o) => o.status === "CANCELLED"
+        );
+
+        const grossOrderSubtotal = activeOrders.reduce(
+          (sum, o) => sum + getOrderNetFinancials(o).subtotal,
+          0
+        );
+        const totalDiscountGiven = activeOrders.reduce(
+          (sum, o) => sum + getOrderNetFinancials(o).discAmt,
+          0
+        );
+        const totalIncome = activeOrders.reduce(
+          (sum, o) => sum + getOrderNetFinancials(o).netPayable,
+          0
+        );
+        const realizedDeliveredIncome = deliveredOrders.reduce(
+          (sum, o) => sum + getOrderNetFinancials(o).netPayable,
+          0
+        );
+        const pipelineOrderIncome = Math.max(0, totalIncome - realizedDeliveredIncome);
+
+        // 2. Calculate Real-Time Expenses (Farmer Wholesale Procurement Payouts)
+        const settledExpenses = filteredPurchasesForAnalytics
+          .filter((p) => p.payment_status === "PAID")
+          .reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+        const pendingExpenses = filteredPurchasesForAnalytics
+          .filter((p) => p.payment_status !== "PAID")
+          .reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+        const totalExpenses = settledExpenses + pendingExpenses;
+
+        // 3. Net Profit / Cashflow Balance & Margin
+        const netBalance = totalIncome - totalExpenses;
+        const profitMarginPct =
+          totalIncome > 0 ? ((netBalance / totalIncome) * 100).toFixed(1) : "0.0";
+        const totalInventoryValuation = products.reduce(
+          (sum, p) => sum + Number(p.price || 0) * Number(p.stock_quantity || 0),
+          0
+        );
+
+        // 4. SVG Donut / Pie Chart Segments (4 Financial Slices)
+        const pieSegmentsRaw = [
+          {
+            id: "delivered_income",
+            label: "Delivered Order Income",
+            value: realizedDeliveredIncome,
+            color: "#14532D",
+            bgBadge: "bg-[#14532D]",
+            type: "INCOME",
+          },
+          {
+            id: "pipeline_income",
+            label: "Confirmed / Pending Order Income",
+            value: pipelineOrderIncome,
+            color: "#10B981",
+            bgBadge: "bg-emerald-500",
+            type: "INCOME",
+          },
+          {
+            id: "settled_expense",
+            label: "Farmer Payouts (PAID Expense)",
+            value: settledExpenses,
+            color: "#D97706",
+            bgBadge: "bg-amber-600",
+            type: "EXPENSE",
+          },
+          {
+            id: "pending_expense",
+            label: "Farmer Payables (PENDING Expense)",
+            value: pendingExpenses,
+            color: "#EF4444",
+            bgBadge: "bg-red-500",
+            type: "EXPENSE",
+          },
+        ];
+
+        const totalPieVolume = pieSegmentsRaw.reduce((sum, s) => sum + s.value, 0);
+        const radius = 72;
+        const circumference = 2 * Math.PI * radius;
+        let cumulativePercent = 0;
+
+        const pieSlices = pieSegmentsRaw.map((seg) => {
+          const pct = totalPieVolume > 0 ? seg.value / totalPieVolume : 0;
+          const strokeDasharray = `${(pct * circumference).toFixed(2)} ${circumference.toFixed(2)}`;
+          const strokeDashoffset = (-cumulativePercent * circumference).toFixed(2);
+          cumulativePercent += pct;
+          return {
+            ...seg,
+            pct: (pct * 100).toFixed(1),
+            strokeDasharray,
+            strokeDashoffset,
+          };
+        });
+
+        // 5. Category-Wise Income vs. Expense Bar Chart Data
+        const categoriesList = ["VEGETABLES", "FRUITS", "GRAINS", "SPICES", "DAIRY"];
+        const categoryChartData = categoriesList.map((cat) => {
+          // Match orders to category via product lookup
+          const catIncome = activeOrders
+            .filter((o) => {
+              const matchedProd = products.find(
+                (p) => p.id === o.product || p.name === o.product_name
+              );
+              const prodCat = (matchedProd?.category || "VEGETABLES").toUpperCase();
+              return prodCat === cat;
+            })
+            .reduce((sum, o) => sum + getOrderNetFinancials(o).netPayable, 0);
+
+          const catExpense = filteredPurchasesForAnalytics
+            .filter((p) => {
+              const pCat = (p.category || "").toUpperCase();
+              if (cat === "FRUITS") return pCat.includes("FRUIT");
+              if (cat === "GRAINS") return pCat.includes("GRAIN") || pCat.includes("PULSE");
+              if (cat === "SPICES") return pCat.includes("SPICE") || pCat.includes("HERB");
+              if (cat === "DAIRY") return pCat.includes("DAIRY") || pCat.includes("HONEY") || pCat.includes("OIL");
+              return (
+                pCat.includes("VEG") ||
+                (!pCat.includes("FRUIT") &&
+                  !pCat.includes("GRAIN") &&
+                  !pCat.includes("SPICE") &&
+                  !pCat.includes("DAIRY"))
+              );
+            })
+            .reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+
+          const catStockVal = products
+            .filter((p) => (p.category || "").toUpperCase() === cat)
+            .reduce((sum, p) => sum + Number(p.price || 0) * Number(p.stock_quantity || 0), 0);
+
+          return {
+            category: cat,
+            label:
+              cat === "VEGETABLES"
+                ? "🥬 Vegetables"
+                : cat === "FRUITS"
+                ? "🍎 Fruits"
+                : cat === "GRAINS"
+                ? "🌾 Grains"
+                : cat === "SPICES"
+                ? "🌶️ Spices"
+                : "🍯 Dairy & Oils",
+            income: Number(catIncome.toFixed(2)),
+            expense: Number(catExpense.toFixed(2)),
+            stockVal: Number(catStockVal.toFixed(2)),
+          };
+        });
+
+        const maxBarValue = Math.max(
+          1000,
+          ...categoryChartData.map((d) => Math.max(d.income, d.expense))
+        );
+
+        // 6. Chronological Combined Financial Ledger (Income + Expenses)
+        const combinedLedger = [
+          ...activeOrders.map((o) => {
+            const { discPct, netPayable } = getOrderNetFinancials(o);
+            return {
+              uid: `ORD-${o.id}`,
+              refId: `#KM-ORD-${o.id}`,
+              date: o.created_at,
+              type: "INCOME",
+              party: o.buyer_name || "Customer",
+              item: `${o.product_name} (${o.quantity} ${o.product_unit || "unit"})`,
+              status: o.status,
+              note: discPct > 0 ? `${discPct}% Discount Applied` : "Standard Hub Rate",
+              amount: netPayable,
+            };
+          }),
+          ...filteredPurchasesForAnalytics.map((p) => ({
+            uid: `PUR-${p.id}`,
+            refId: `#KM-PUR-${p.id}`,
+            date: p.created_at,
+            type: "EXPENSE",
+            party: p.farmer_name || "Farmer",
+            item: `${p.crop_name} (${p.quantity} ${p.unit || "kg"})`,
+            status: p.payment_status,
+            note: `Paid via ${p.payment_method}`,
+            amount: Number(p.total_amount || 0),
+          })),
+        ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+        return (
+          <div className="space-y-6">
+            {/* Top Analytics Control Bar */}
+            <div className="bg-white rounded-3xl p-4 sm:p-6 border border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-black uppercase tracking-wider">
+                    ● Real-Time Financial Intelligence
+                  </span>
+                  <span className="text-[11px] text-slate-400 font-semibold">
+                    Auto-updates every 3.5s
+                  </span>
+                </div>
+                <h3 className="text-lg sm:text-2xl font-black text-slate-900 mt-1">
+                  KrishiMart Income vs. Expenses Analytics
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Live comparison of customer sales revenue (after discounts) against farmer
+                  wholesale procurement payouts.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Timeframe Filter Pills */}
+                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+                  {[
+                    { id: "ALL", label: "All Time" },
+                    { id: "30D", label: "Last 30 Days" },
+                    { id: "7D", label: "Last 7 Days" },
+                    { id: "TODAY", label: "Today" },
+                  ].map((tf) => (
+                    <button
+                      key={tf.id}
+                      type="button"
+                      onClick={() => setAnalyticsRange(tf.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer ${
+                        analyticsRange === tf.id
+                          ? "bg-[#14532D] text-white shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {tf.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Chart View Mode Selector */}
+                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+                  {[
+                    { id: "BOTH", label: "📊 Both Charts" },
+                    { id: "PIE", label: "🍩 Pie Chart" },
+                    { id: "BAR", label: "📈 Bar Chart" },
+                  ].map((cm) => (
+                    <button
+                      key={cm.id}
+                      type="button"
+                      onClick={() => setChartMode(cm.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer ${
+                        chartMode === cm.id
+                          ? "bg-amber-400 text-slate-950 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {cm.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportCSV(
+                      `KrishiMart_Financial_Statement_${new Date().toISOString().slice(0, 10)}.csv`,
+                      [
+                        "Reference ID",
+                        "Date",
+                        "Transaction Type",
+                        "Counterparty (Buyer / Farmer)",
+                        "Crop / Item Details",
+                        "Status",
+                        "Remarks",
+                        "Amount (NPR)",
+                      ],
+                      combinedLedger.map((row) => [
+                        row.refId,
+                        new Date(row.date || Date.now()).toLocaleDateString(),
+                        row.type,
+                        row.party,
+                        row.item,
+                        row.status,
+                        row.note,
+                        row.type === "INCOME" ? `+${row.amount.toFixed(2)}` : `-${row.amount.toFixed(2)}`,
+                      ])
+                    )
+                  }
+                  className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold transition cursor-pointer"
+                >
+                  📊 Export P&L (.CSV)
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Executive Financial KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Total Net Income */}
+              <div className="bg-white rounded-3xl p-5 border border-emerald-200/90 shadow-2xs space-y-2 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">
+                    Total Sales Income (Net)
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-black">
+                    + INCOME
+                  </span>
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-[#14532D]">
+                  रु {totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <div className="text-[11px] text-slate-500 space-y-0.5 pt-1 border-t border-slate-100">
+                  <div className="flex justify-between">
+                    <span>Delivered Cash:</span>
+                    <strong className="text-emerald-700">रु {realizedDeliveredIncome.toLocaleString()}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Discounts Given:</span>
+                    <strong className="text-amber-700">- रु {totalDiscountGiven.toLocaleString()}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Total Procurement Expenses */}
+              <div className="bg-white rounded-3xl p-5 border border-amber-200/90 shadow-2xs space-y-2 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-800">
+                    Farmer Payout Expenses
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-black">
+                    - EXPENSE
+                  </span>
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-amber-700">
+                  रु {totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <div className="text-[11px] text-slate-500 space-y-0.5 pt-1 border-t border-slate-100">
+                  <div className="flex justify-between">
+                    <span>Settled (PAID):</span>
+                    <strong className="text-slate-800">रु {settledExpenses.toLocaleString()}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Pending Payable:</span>
+                    <strong className="text-red-600">रु {pendingExpenses.toLocaleString()}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Net Profit / Cashflow Balance */}
+              <div
+                className={`rounded-3xl p-5 border shadow-2xs space-y-2 ${
+                  netBalance >= 0
+                    ? "bg-gradient-to-br from-emerald-50/90 to-white border-emerald-300"
+                    : "bg-gradient-to-br from-amber-50/90 to-white border-amber-300"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-600">
+                    {netBalance >= 0 ? "Net Operating Profit" : "Net Inventory Investment"}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      netBalance >= 0
+                        ? "bg-[#14532D] text-amber-300"
+                        : "bg-amber-200 text-amber-950"
+                    }`}
+                  >
+                    {netBalance >= 0 ? `Margin ${profitMarginPct}%` : "Stocking Phase"}
+                  </span>
+                </div>
+                <p
+                  className={`text-2xl sm:text-3xl font-black ${
+                    netBalance >= 0 ? "text-[#14532D]" : "text-amber-800"
+                  }`}
+                >
+                  {netBalance >= 0 ? "+" : "-"} रु{" "}
+                  {Math.abs(netBalance).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </p>
+                <div className="text-[11px] text-slate-500 space-y-0.5 pt-1 border-t border-slate-200/60">
+                  <div className="flex justify-between">
+                    <span>Formula:</span>
+                    <strong className="text-slate-700">Income − Farmer Cost</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Active Orders:</span>
+                    <strong className="text-slate-800">{activeOrders.length} orders</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 4: Live Store Inventory Asset Value */}
+              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                    Unsold Store Stock Value
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black">
+                    ASSET VALUE
+                  </span>
+                </div>
+                <p className="text-2xl sm:text-3xl font-black text-slate-900">
+                  रु {totalInventoryValuation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <div className="text-[11px] text-slate-500 space-y-0.5 pt-1 border-t border-slate-100">
+                  <div className="flex justify-between">
+                    <span>Active Store Batches:</span>
+                    <strong className="text-slate-800">{products.length} items</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Stock Weight:</span>
+                    <strong className="text-emerald-700">
+                      {products.reduce((s, p) => s + Number(p.stock_quantity || 0), 0).toFixed(0)} units
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* MAIN CHARTS GRID: PIE / DONUT CHART + VERTICAL GROUPED BAR CHART */}
+            <div
+              className={`grid grid-cols-1 ${
+                chartMode === "BOTH" ? "lg:grid-cols-12" : ""
+              } gap-6`}
+            >
+              {/* 1. INTERACTIVE SVG DONUT / PIE CHART: INCOME VS. EXPENSES BREAKDOWN */}
+              {(chartMode === "BOTH" || chartMode === "PIE") && (
+                <div
+                  className={`${
+                    chartMode === "BOTH" ? "lg:col-span-5" : ""
+                  } bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs flex flex-col justify-between space-y-5`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
+                        PROPORTIONAL DISTRIBUTION
+                      </span>
+                      <h4 className="text-base sm:text-lg font-black text-slate-900">
+                        Income vs. Expenses Pie Chart
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Real-time share of customer sales revenue vs. farmer payouts
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 text-[11px] font-extrabold">
+                      Total Volume: रु {totalPieVolume.toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* SVG Donut Chart Centerpiece */}
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
+                    <div className="relative w-48 h-48 flex items-center justify-center shrink-0">
+                      <svg className="w-48 h-48 -rotate-90" viewBox="0 0 180 180">
+                        {/* Background Ring */}
+                        <circle
+                          cx="90"
+                          cy="90"
+                          r={radius}
+                          fill="transparent"
+                          stroke="#F1F5F9"
+                          strokeWidth="24"
+                        />
+                        {totalPieVolume > 0 &&
+                          pieSlices.map((slice) =>
+                            slice.value > 0 ? (
+                              <circle
+                                key={slice.id}
+                                cx="90"
+                                cy="90"
+                                r={radius}
+                                fill="transparent"
+                                stroke={slice.color}
+                                strokeWidth="24"
+                                strokeDasharray={slice.strokeDasharray}
+                                strokeDashoffset={slice.strokeDashoffset}
+                                className="transition-all duration-500 hover:opacity-85 cursor-pointer"
+                              >
+                                <title>{`${slice.label}: रु ${slice.value.toLocaleString()} (${slice.pct}%)`}</title>
+                              </circle>
+                            ) : null
+                          )}
+                      </svg>
+                      {/* Center Donut Label */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400">
+                          Income Share
+                        </span>
+                        <span className="text-xl font-black text-[#14532D]">
+                          {totalPieVolume > 0
+                            ? `${Math.round((totalIncome / totalPieVolume) * 100)}%`
+                            : "0%"}
+                        </span>
+                        <span className="text-[10px] font-bold text-amber-700">
+                          Expense:{" "}
+                          {totalPieVolume > 0
+                            ? `${Math.round((totalExpenses / totalPieVolume) * 100)}%`
+                            : "0%"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pie Chart Legend & Exact Values */}
+                    <div className="flex-1 w-full space-y-2.5">
+                      {pieSlices.map((slice) => (
+                        <div
+                          key={slice.id}
+                          className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200/70 flex items-center justify-between gap-2"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span
+                              className="w-3.5 h-3.5 rounded-md shrink-0"
+                              style={{ backgroundColor: slice.color }}
+                            />
+                            <div className="truncate">
+                              <p className="text-xs font-extrabold text-slate-800 truncate">
+                                {slice.label}
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-semibold">
+                                {slice.type} • {slice.pct}% of flow
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-xs font-black text-slate-900 shrink-0">
+                            रु {slice.value.toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Direct Income vs Expense Summary Bar */}
+                  <div className="pt-3 border-t border-slate-100 space-y-2">
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-[#14532D]">
+                        🟢 Total Income: रु {totalIncome.toLocaleString()}
+                      </span>
+                      <span className="text-amber-700">
+                        🟠 Total Expense: रु {totalExpenses.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="w-full h-3 rounded-full bg-amber-500/25 overflow-hidden flex">
+                      <div
+                        className="h-full bg-[#14532D] transition-all duration-500"
+                        style={{
+                          width: `${
+                            totalPieVolume > 0
+                              ? Math.round((totalIncome / totalPieVolume) * 100)
+                              : 50
+                          }%`,
+                        }}
+                      />
+                      <div
+                        className="h-full bg-amber-500 transition-all duration-500"
+                        style={{
+                          width: `${
+                            totalPieVolume > 0
+                              ? Math.round((totalExpenses / totalPieVolume) * 100)
+                              : 50
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. INTERACTIVE VERTICAL GROUPED BAR CHART: CATEGORY-WISE INCOME VS. EXPENSE */}
+              {(chartMode === "BOTH" || chartMode === "BAR") && (
+                <div
+                  className={`${
+                    chartMode === "BOTH" ? "lg:col-span-7" : ""
+                  } bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs flex flex-col justify-between space-y-5`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700">
+                        CATEGORY PERFORMANCE
+                      </span>
+                      <h4 className="text-base sm:text-lg font-black text-slate-900">
+                        Income vs. Farmer Procurement Cost Bar Chart
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Side-by-side comparison across all 5 produce categories
+                      </p>
+                    </div>
+
+                    {/* Bar Chart Legend */}
+                    <div className="flex items-center gap-4 text-xs font-bold bg-slate-50 px-3.5 py-2 rounded-2xl border border-slate-200">
+                      <span className="flex items-center gap-1.5 text-[#14532D]">
+                        <span className="w-3 h-3 rounded-xs bg-[#14532D] inline-block" />
+                        Sales Income (रु)
+                      </span>
+                      <span className="flex items-center gap-1.5 text-amber-700">
+                        <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block" />
+                        Farmer Expense (रु)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Vertical Grouped Bar Chart Canvas */}
+                  <div className="pt-6 pb-2 px-2 sm:px-4 bg-slate-50/70 rounded-2xl border border-slate-200/80">
+                    <div className="grid grid-cols-5 gap-2 sm:gap-5 items-end h-56 pt-6 border-b border-slate-300 px-1 sm:px-3">
+                      {categoryChartData.map((row) => {
+                        const incHeightPct = Math.max(
+                          row.income > 0 ? 8 : 2,
+                          Math.round((row.income / maxBarValue) * 100)
+                        );
+                        const expHeightPct = Math.max(
+                          row.expense > 0 ? 8 : 2,
+                          Math.round((row.expense / maxBarValue) * 100)
+                        );
+                        return (
+                          <div
+                            key={row.category}
+                            className="flex flex-col items-center justify-end h-full group"
+                          >
+                            <div className="flex items-end justify-center gap-1.5 sm:gap-2.5 w-full h-full">
+                              {/* Income Bar */}
+                              <div className="flex flex-col items-center justify-end h-full flex-1 max-w-[34px]">
+                                <span className="text-[9px] sm:text-[10px] font-black text-[#14532D] mb-1 truncate">
+                                  {row.income > 0 ? `रु${row.income.toLocaleString()}` : "0"}
+                                </span>
+                                <div
+                                  className="w-full rounded-t-xl bg-gradient-to-t from-[#14532D] to-emerald-500 transition-all duration-500 shadow-2xs group-hover:brightness-110"
+                                  style={{ height: `${incHeightPct}%` }}
+                                  title={`${row.label} Income: रु ${row.income.toLocaleString()}`}
+                                />
+                              </div>
+
+                              {/* Expense Bar */}
+                              <div className="flex flex-col items-center justify-end h-full flex-1 max-w-[34px]">
+                                <span className="text-[9px] sm:text-[10px] font-black text-amber-700 mb-1 truncate">
+                                  {row.expense > 0 ? `रु${row.expense.toLocaleString()}` : "0"}
+                                </span>
+                                <div
+                                  className="w-full rounded-t-xl bg-gradient-to-t from-amber-600 to-amber-400 transition-all duration-500 shadow-2xs group-hover:brightness-110"
+                                  style={{ height: `${expHeightPct}%` }}
+                                  title={`${row.label} Expense: रु ${row.expense.toLocaleString()}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* X-Axis Category Labels */}
+                    <div className="grid grid-cols-5 gap-2 sm:gap-5 pt-2.5 text-center">
+                      {categoryChartData.map((row) => {
+                        const catNet = row.income - row.expense;
+                        return (
+                          <div key={row.category} className="space-y-0.5">
+                            <p className="text-[10px] sm:text-xs font-extrabold text-slate-800 truncate">
+                              {row.label}
+                            </p>
+                            <p
+                              className={`text-[9px] sm:text-[10px] font-bold ${
+                                catNet >= 0 ? "text-emerald-700" : "text-amber-700"
+                              }`}
+                            >
+                              {catNet >= 0 ? `+रु ${catNet.toLocaleString()}` : `-रु ${Math.abs(catNet).toLocaleString()}`}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Order Status Distribution Mini Bar Strip */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                    <div className="p-2.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/70 text-center">
+                      <p className="text-[10px] font-bold text-emerald-800 uppercase">Delivered</p>
+                      <p className="text-base font-black text-[#14532D]">
+                        {deliveredOrders.length} Orders
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-blue-50/70 border border-blue-200/70 text-center">
+                      <p className="text-[10px] font-bold text-blue-800 uppercase">Confirmed</p>
+                      <p className="text-base font-black text-blue-900">
+                        {confirmedOrders.length} Orders
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-amber-50/70 border border-amber-200/70 text-center">
+                      <p className="text-[10px] font-bold text-amber-800 uppercase">Pending</p>
+                      <p className="text-base font-black text-amber-800">
+                        {pendingOrdersList.length} Orders
+                      </p>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-red-50/70 border border-red-200/70 text-center">
+                      <p className="text-[10px] font-bold text-red-700 uppercase">Cancelled</p>
+                      <p className="text-base font-black text-red-700">
+                        {cancelledOrdersList.length} Orders
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* UNIFIED REAL-TIME INCOME & EXPENSE CASHFLOW LEDGER TABLE */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="p-4 sm:p-5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70">
+                <div>
+                  <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
+                    Unified Real-Time Income & Expense Cashflow Statement ({combinedLedger.length} Entries)
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Every customer order (+ Income) and farmer harvest purchase (− Expense) sorted chronologically
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-100 text-[#14532D] text-xs font-extrabold">
+                  Net Balance: {netBalance >= 0 ? "+" : "-"} रु {Math.abs(netBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              {combinedLedger.length === 0 ? (
+                <p className="p-8 text-center text-xs text-slate-400">
+                  No financial transactions recorded in this timeframe yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto max-h-96">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-600 uppercase text-[10px] font-extrabold border-b border-slate-200">
+                        <th className="py-3 px-4">Ref ID</th>
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-4">Type</th>
+                        <th className="py-3 px-4">Buyer / Farmer</th>
+                        <th className="py-3 px-4">Produce Batch</th>
+                        <th className="py-3 px-4">Status / Note</th>
+                        <th className="py-3 px-4 text-right">Amount (रु)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {combinedLedger.slice(0, 30).map((row) => (
+                        <tr key={row.uid} className="hover:bg-slate-50/80 transition">
+                          <td className="py-3 px-4 font-black text-slate-700">{row.refId}</td>
+                          <td className="py-3 px-4 text-slate-500">
+                            {new Date(row.date || Date.now()).toLocaleDateString()}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                row.type === "INCOME"
+                                  ? "bg-emerald-100 text-[#14532D]"
+                                  : "bg-amber-100 text-amber-900"
+                              }`}
+                            >
+                              {row.type === "INCOME" ? "↑ INCOME" : "↓ EXPENSE"}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-800">{row.party}</td>
+                          <td className="py-3 px-4 text-slate-600">{row.item}</td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-700">{row.status}</span>
+                            <span className="text-slate-400 ml-1">({row.note})</span>
+                          </td>
+                          <td
+                            className={`py-3 px-4 text-right font-black text-sm ${
+                              row.type === "INCOME" ? "text-[#14532D]" : "text-amber-700"
+                            }`}
+                          >
+                            {row.type === "INCOME" ? "+" : "-"} रु{" "}
+                            {row.amount.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
