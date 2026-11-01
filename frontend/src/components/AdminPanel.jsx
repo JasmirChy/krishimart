@@ -51,7 +51,9 @@ export default function AdminPanel() {
 
   const [storyFilter, setStoryFilter] = useState("ALL"); // "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "FARMER_STORY" | "BUYER_REVIEW"
   const [analyticsRange, setAnalyticsRange] = useState("ALL"); // "ALL" | "30D" | "7D" | "TODAY"
-  const [chartMode, setChartMode] = useState("BOTH"); // "BOTH" | "PIE" | "BAR" 
+  const [chartMode, setChartMode] = useState("BOTH"); // "BOTH" | "PIE" | "BAR"
+  const [productAdminSearch, setProductAdminSearch] = useState("");
+  const [productAdminCat, setProductAdminCat] = useState("ALL");
 
   // Admin Chat state (Messenger Inbox)
   const [threads, setThreads] = useState([]);
@@ -148,6 +150,8 @@ export default function AdminPanel() {
   });
   const [showNewUserPassword, setShowNewUserPassword] = useState(false);
   const [showNewUserConfirm, setShowNewUserConfirm] = useState(false);
+  const [showAddUserForm, setShowAddUserForm] = useState(false);
+  const [showAddProductForm, setShowAddProductForm] = useState(false);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -350,6 +354,7 @@ export default function AdminPanel() {
         password: "",
         confirm_password: "",
       });
+      setShowAddUserForm(false);
       fetchAllAdminData();
       showToast("New user created and verified!");
     } catch {
@@ -377,6 +382,7 @@ const handleAddProduct = async (e) => {
         description: "",
         image: null,
       });
+      setShowAddProductForm(false);
       showToast("Product published to store!");
       fetchAllAdminData();
     } catch {
@@ -953,21 +959,67 @@ const handleOrderStatus = async (orderId, status) => {
         </div>
       )}
 
-      {/* Top Banner & Tab Navigation */}
-      <div className="bg-gradient-to-r from-[#1B4332] to-[#2D6A4F] rounded-3xl p-5 sm:p-6 text-white shadow-lg flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <span className="text-xs uppercase tracking-widest text-amber-300 font-bold">
-            KrishiMart Control Center
-          </span>
-          <h2 className="text-xl sm:text-2xl font-extrabold mt-1">Admin Management Dashboard</h2>
-          <p className="text-xs sm:text-sm text-emerald-100 flex items-center gap-1.5 mt-0.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Live Real-Time
-            Auto-Sync Active
-          </p>
+      {/* Executive Command Center Header + Segmented Navigation Dock */}
+      <div className="bg-gradient-to-r from-[#0F3822] via-[#14532D] to-[#1B4332] rounded-3xl p-5 sm:p-7 text-white shadow-xl border border-emerald-800/60 relative overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/40 text-amber-300 text-[10px] font-black uppercase tracking-widest">
+                🌱 KrishiMart Executive Control Center
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-700/60 text-emerald-200 text-[10px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Real-Time Cloud Sync (3.5s)
+              </span>
+            </div>
+            <h2 className="text-xl sm:text-3xl font-black tracking-tight mt-1">
+              Admin Operations & Financial Hub
+            </h2>
+            <p className="text-xs sm:text-sm text-emerald-100/90 max-w-2xl">
+              Manage wholesale farmer procurement, customer orders, 1/4 A4 discounted receipts,
+              user verifications, and real-time P&L analytics from one unified workspace.
+            </p>
+          </div>
+
+          {/* Right Quick Action Summary Pill */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {(pendingOrdersCount + pendingSubmissionsCount + pendingUsersCount) > 0 && (
+              <div className="px-3.5 py-2 rounded-2xl bg-amber-400/15 border border-amber-300/30 text-amber-200 text-xs font-bold flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span>
+                  {pendingOrdersCount + pendingSubmissionsCount + pendingUsersCount} Pending
+                  Action(s)
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setSubTab(subTab === "analytics" ? "orders" : "analytics")}
+              className="px-4 py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-md transition cursor-pointer"
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>
+                {subTab === "analytics" ? "← Back to Operations" : "📊 View Analytics & P&L"}
+              </span>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        {/* Sleek Segmented Navigation Dock */}
+        <div className="mt-5 pt-4 border-t border-white/10 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {[
-            { id: "users", label: "Users & Verification", icon: Users, badge: pendingUsersCount },
+            {
+              id: "analytics",
+              label: "Analytics & P&L",
+              icon: CreditCard,
+              badge: 0,
+            },
+            {
+              id: "orders",
+              label: "Customer Orders",
+              icon: ShoppingBag,
+              badge: pendingOrdersCount,
+            },
             {
               id: "submissions",
               label: "Farmer Offers",
@@ -976,9 +1028,27 @@ const handleOrderStatus = async (orderId, status) => {
             },
             {
               id: "purchases",
-              label: "Bought from Farmers",
+              label: "Farmer Ledger",
               icon: Receipt,
               badge: purchases.filter((p) => p.payment_status === "PENDING").length,
+            },
+            {
+              id: "products",
+              label: "Store Inventory",
+              icon: Package,
+              badge: 0,
+            },
+            {
+              id: "users",
+              label: "Users & Roles",
+              icon: Users,
+              badge: pendingUsersCount,
+            },
+            {
+              id: "chat",
+              label: "Messenger Inbox",
+              icon: MessageSquare,
+              badge: totalUnreadChats,
             },
             {
               id: "stories",
@@ -986,41 +1056,28 @@ const handleOrderStatus = async (orderId, status) => {
               icon: BookOpen,
               badge: pendingStoriesCount,
             },
-            { id: "products", label: "Store Inventory", icon: Package },
-            {
-              id: "orders",
-              label: "Customer Orders",
-              icon: ShoppingBag,
-              badge: pendingOrdersCount,
-            },
-            {
-              id: "chat",
-              label: "Chat Inbox",
-              icon: MessageSquare,
-              badge: totalUnreadChats,
-            },
-            {
-              id: "analytics",
-              label: "📊 Analytics & Finance",
-              icon: CreditCard,
-              badge: 0,
-            },
           ].map((tab) => {
             const Icon = tab.icon;
+            const active = subTab === tab.id;
             return (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => setSubTab(tab.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition cursor-pointer ${
-                  subTab === tab.id
-                    ? "bg-amber-500 text-slate-950 shadow-md"
-                    : "bg-white/10 text-white hover:bg-white/20"
+                className={`px-3.5 py-2.5 rounded-2xl text-xs font-extrabold whitespace-nowrap flex items-center gap-2 transition cursor-pointer shrink-0 ${
+                  active
+                    ? "bg-white text-[#14532D] shadow-md scale-[1.01]"
+                    : "bg-white/10 text-emerald-50 hover:bg-white/20"
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                {tab.label}
+                <Icon className={`w-4 h-4 ${active ? "text-[#14532D]" : "text-amber-300"}`} />
+                <span>{tab.label}</span>
                 {tab.badge > 0 && (
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-red-500 text-white font-bold">
+                  <span
+                    className={`px-2 py-0.2 text-[10px] rounded-full font-black ${
+                      active ? "bg-red-600 text-white" : "bg-amber-400 text-slate-950"
+                    }`}
+                  >
                     {tab.badge}
                   </span>
                 )}
@@ -1030,97 +1087,211 @@ const handleOrderStatus = async (orderId, status) => {
         </div>
       </div>
 
-      {/* Top Financial & Procurement Analytics (With Facebook Shimmer Loader on Initial Sync) */}
-      {loadingAdmin ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((n) => (
-              <div
-                key={n}
-                className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-2.5"
-              >
-                <div className="w-28 h-3 rounded km-shimmer" />
-                <div className="w-36 h-7 rounded-lg km-shimmer" />
-                <div className="w-24 h-3 rounded km-shimmer" />
-              </div>
-            ))}
-          </div>
-          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex justify-between items-center">
-              <div className="w-48 h-6 rounded-lg km-shimmer" />
-              <div className="w-32 h-8 rounded-xl km-shimmer" />
-            </div>
-            {[1, 2, 3, 4].map((row) => (
-              <div
-                key={row}
-                className="p-4 rounded-2xl border border-slate-100 flex items-center justify-between gap-4"
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  <div className="w-11 h-11 rounded-full km-shimmer shrink-0" />
-                  <div className="space-y-2 flex-1">
-                    <div className="w-44 h-4 rounded km-shimmer" />
-                    <div className="w-64 h-3 rounded km-shimmer" />
-                  </div>
+      {/* Interactive 4-Card KPI Strip (Shown on Operational Tabs; Hidden on Analytics & Chat to keep view focused) */}
+      {subTab !== "analytics" && subTab !== "chat" && (
+        loadingAdmin ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((n) => (
+                <div
+                  key={n}
+                  className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-2.5"
+                >
+                  <div className="w-28 h-3 rounded km-shimmer" />
+                  <div className="w-36 h-7 rounded-lg km-shimmer" />
+                  <div className="w-24 h-3 rounded km-shimmer" />
                 </div>
-                <div className="w-28 h-8 rounded-xl km-shimmer" />
+              ))}
+            </div>
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xs space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="w-48 h-6 rounded-lg km-shimmer" />
+                <div className="w-32 h-8 rounded-xl km-shimmer" />
               </div>
-            ))}
+              {[1, 2, 3, 4].map((row) => (
+                <div
+                  key={row}
+                  className="p-4 rounded-2xl border border-slate-100 flex items-center justify-between gap-4"
+                >
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-11 h-11 rounded-full km-shimmer shrink-0" />
+                    <div className="space-y-2 flex-1">
+                      <div className="w-44 h-4 rounded km-shimmer" />
+                      <div className="w-64 h-3 rounded km-shimmer" />
+                    </div>
+                  </div>
+                  <div className="w-28 h-8 rounded-xl km-shimmer" />
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Customer Sales Revenue</span>
-          <p className="text-2xl font-black text-[#1B4332] mt-1">
-            रु{" "}
-            {orders
-              .filter((o) => o.status !== "CANCELLED")
-              .reduce((sum, o) => sum + Number(o.total_price || 0), 0)
-              .toLocaleString()}
-          </p>
-          <span className="text-[11px] text-emerald-700 font-semibold">
-            {orders.filter((o) => o.status === "DELIVERED").length} delivered • {orders.length}{" "}
-            total
-          </span>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+            {/* KPI 1: Net Customer Sales Revenue */}
+            <div
+              onClick={() => setSubTab("orders")}
+              className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 hover:border-emerald-300 shadow-2xs hover:shadow-md transition cursor-pointer group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  Customer Order Revenue
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-[#14532D] flex items-center justify-center group-hover:bg-[#14532D] group-hover:text-white transition">
+                  <ShoppingBag className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-xl sm:text-2xl font-black text-[#14532D] mt-1.5">
+                रु{" "}
+                {orders
+                  .filter((o) => o.status !== "CANCELLED")
+                  .reduce((sum, o) => sum + getOrderNetFinancials(o).netPayable, 0)
+                  .toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+              <div className="flex items-center justify-between mt-1 text-[11px]">
+                <span className="text-emerald-700 font-bold">
+                  ✓ {orders.filter((o) => o.status === "DELIVERED").length} Delivered
+                </span>
+                {pendingOrdersCount > 0 && (
+                  <span className="px-2 py-0.2 rounded-full bg-amber-100 text-amber-900 font-black text-[10px]">
+                    {pendingOrdersCount} Pending
+                  </span>
+                )}
+              </div>
+            </div>
 
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Paid to Farmers</span>
-          <p className="text-2xl font-black text-amber-700 mt-1">
-            रु {totalProcuredAmount.toLocaleString()}
-          </p>
-          <span className="text-[11px] text-slate-500 font-semibold">
-            {purchases.length} batches bought
-          </span>
-        </div>
+            {/* KPI 2: Farmer Wholesale Payouts */}
+            <div
+              onClick={() => setSubTab("purchases")}
+              className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 hover:border-amber-300 shadow-2xs hover:shadow-md transition cursor-pointer group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  Farmer Procurement
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-slate-950 transition">
+                  <Receipt className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-xl sm:text-2xl font-black text-amber-700 mt-1.5">
+                रु {totalProcuredAmount.toLocaleString()}
+              </p>
+              <div className="flex items-center justify-between mt-1 text-[11px]">
+                <span className="text-slate-500 font-semibold">
+                  {purchases.length} Batches Bought
+                </span>
+                {purchases.filter((p) => p.payment_status === "PENDING").length > 0 && (
+                  <span className="px-2 py-0.2 rounded-full bg-red-100 text-red-700 font-black text-[10px]">
+                    {purchases.filter((p) => p.payment_status === "PENDING").length} Unpaid
+                  </span>
+                )}
+              </div>
+            </div>
 
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Pending Farmer Offers</span>
-          <p className="text-2xl font-black text-slate-900 mt-1">{pendingSubmissionsCount}</p>
-          <span className="text-[11px] text-amber-700 font-semibold">awaiting purchase</span>
-        </div>
+            {/* KPI 3: Farmer Harvest Offers */}
+            <div
+              onClick={() => setSubTab("submissions")}
+              className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 hover:border-emerald-300 shadow-2xs hover:shadow-md transition cursor-pointer group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  Farmer Crop Offers
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center group-hover:bg-emerald-700 group-hover:text-white transition">
+                  <Sprout className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-xl sm:text-2xl font-black text-slate-900 mt-1.5">
+                {submissions.length}
+              </p>
+              <div className="flex items-center justify-between mt-1 text-[11px]">
+                <span className="text-amber-700 font-bold">
+                  {pendingSubmissionsCount} Awaiting Review
+                </span>
+                <span className="text-slate-400 font-semibold">
+                  {submissions.filter((s) => s.status === "BOUGHT").length} Procured
+                </span>
+              </div>
+            </div>
 
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-bold text-slate-400 uppercase">Community Reviews</span>
-          <p className="text-2xl font-black text-slate-900 mt-1">{stories.length}</p>
-          <span className="text-[11px] text-emerald-700 font-semibold">
-            {pendingStoriesCount} pending approval
-          </span>
-        </div>
-      </div>
-
+            {/* KPI 4: Registered Users & Verification */}
+            <div
+              onClick={() => setSubTab("users")}
+              className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 hover:border-blue-300 shadow-2xs hover:shadow-md transition cursor-pointer group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  Platform Members
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition">
+                  <Users className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-xl sm:text-2xl font-black text-slate-900 mt-1.5">
+                {users.length}
+              </p>
+              <div className="flex items-center justify-between mt-1 text-[11px]">
+                <span className="text-emerald-700 font-bold">
+                  ✓ {users.filter((u) => u.is_admin_verified).length} Verified
+                </span>
+                {pendingUsersCount > 0 && (
+                  <span className="px-2 py-0.2 rounded-full bg-amber-100 text-amber-900 font-black text-[10px]">
+                    {pendingUsersCount} Unverified
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )
       )}
 
       {/* 1. USERS & VERIFICATION TAB (WITH PROFILE PICTURES) */}
       {subTab === "users" && (
-        <div className="grid lg:grid-cols-3 gap-6">
-          <form
-            onSubmit={handleCreateUser}
-            className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3 h-fit"
-          >
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Plus className="w-5 h-5 text-emerald-700" /> Add & Verify New User
-            </h3>
+        <div className="space-y-4">
+          {!showAddUserForm && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#1B4332]">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                    Manage & Verify Accounts
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Click the button on the right to register and auto-verify a new Customer or Farmer account
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddUserForm(true)}
+                className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-sm transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add & Verify New User</span>
+              </button>
+            </div>
+          )}
+
+          <div className={`grid gap-6 ${showAddUserForm ? "lg:grid-cols-3" : "grid-cols-1"}`}>
+            {showAddUserForm && (
+              <form
+                onSubmit={handleCreateUser}
+                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3 h-fit animate-fadeIn"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Plus className="w-5 h-5 text-emerald-700" /> Add & Verify New User
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddUserForm(false)}
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                    title="Close form"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
             <input
               type="text"
               required
@@ -1215,8 +1386,9 @@ const handleOrderStatus = async (orderId, status) => {
               Add Verified User
             </button>
           </form>
+            )}
 
-          <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className={`${showAddUserForm ? "lg:col-span-2" : "col-span-1"} bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden`}>
             <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
               <div className="flex flex-wrap justify-between items-center gap-2">
                 <h3 className="font-bold text-slate-900">All Registered Users ({users.length})</h3>
@@ -1380,6 +1552,7 @@ const handleOrderStatus = async (orderId, status) => {
                   </div>
                 ))}
             </div>
+          </div>
           </div>
         </div>
       )}
@@ -2086,14 +2259,53 @@ const handleOrderStatus = async (orderId, status) => {
       })()}
 
       {/* 5. STORE INVENTORY TAB */}
-      {/* 5. STORE INVENTORY TAB */}
       {subTab === "products" && (
-        <div className="grid lg:grid-cols-3 gap-6">
-          <form
-            onSubmit={handleAddProduct}
-            className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3.5 h-fit"
-          >
-            <h3 className="text-lg font-bold text-slate-900">Add Product to Store</h3>
+        <div className="space-y-4">
+          {!showAddProductForm && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#1B4332]">
+                  <Package className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                    Store Inventory & Retail Pricing
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Click the button on the right to publish a new crop or product to the customer marketplace
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddProductForm(true)}
+                className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-sm transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Product to Store</span>
+              </button>
+            </div>
+          )}
+
+          <div className={`grid gap-6 ${showAddProductForm ? "lg:grid-cols-3" : "grid-cols-1"}`}>
+            {showAddProductForm && (
+              <form
+                onSubmit={handleAddProduct}
+                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-3.5 h-fit animate-fadeIn"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Plus className="w-5 h-5 text-emerald-700" /> Add Product to Store
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddProductForm(false)}
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                    title="Close form"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -2250,41 +2462,170 @@ const handleOrderStatus = async (orderId, status) => {
               Publish Product to Store
             </button>
           </form>
+            )}
 
-          <div className="lg:col-span-2 grid sm:grid-cols-2 gap-4 h-fit">
-            {products.map((p) => (
-              <div
-                key={p.id}
-                className="bg-white p-4 rounded-2xl border border-slate-200 flex justify-between items-center gap-3"
-              >
+          <div className={`${showAddProductForm ? "lg:col-span-2" : "col-span-1"} space-y-4`}>
+            {/* Store Inventory Search & Category Filter Bar */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <span className="text-[11px] font-bold text-emerald-700">{p.category}</span>
-                  <h4 className="font-bold text-slate-900">{p.name}</h4>
+                  <h3 className="font-extrabold text-sm sm:text-base text-slate-900">
+                    Live Store Inventory ({products.length} Batches)
+                  </h3>
                   <p className="text-xs text-slate-500">
-                    रु {p.price} / {p.unit} • Stock: <strong>{p.stock_quantity}</strong> {p.unit}
+                    Manage customer selling prices, original MRP discounts, and available stock
                   </p>
-                  {p.origin_location && (
-                    <p className="text-[11px] text-slate-400">📍 {p.origin_location}</p>
-                  )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => setEditingProduct({ ...p })}
-                    className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl cursor-pointer"
-                    title="Edit Category, Price or Stock"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteProduct(p.id, p.name)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
-                    title="Delete Product"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-xs font-extrabold">
+                  Stock Value: रु{" "}
+                  {products
+                    .reduce((s, p) => s + Number(p.price || 0) * Number(p.stock_quantity || 0), 0)
+                    .toLocaleString()}
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Search store inventory by crop name or origin..."
+                    value={productAdminSearch}
+                    onChange={(e) => setProductAdminSearch(e.target.value)}
+                    className="w-full pl-8 pr-4 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 text-xs outline-none focus:border-[#14532D]"
+                  />
+                  <span className="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
+                </div>
+
+                <div className="flex gap-1 overflow-x-auto no-scrollbar">
+                  {[
+                    { id: "ALL", label: "All" },
+                    { id: "VEGETABLES", label: "🥬 Veg" },
+                    { id: "FRUITS", label: "🍎 Fruits" },
+                    { id: "GRAINS", label: "🌾 Grains" },
+                    { id: "SPICES", label: "🌶️ Spices" },
+                    { id: "DAIRY", label: "🍯 Dairy" },
+                  ].map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setProductAdminCat(cat.id)}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
+                        productAdminCat === cat.id
+                          ? "bg-[#14532D] text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
+            </div>
+
+            {/* Rich Store Inventory Cards */}
+            <div className="grid sm:grid-cols-2 gap-3.5">
+              {products
+                .filter((p) => {
+                  const q = productAdminSearch.toLowerCase();
+                  const matchesSearch =
+                    (p.name || "").toLowerCase().includes(q) ||
+                    (p.origin_location || "").toLowerCase().includes(q) ||
+                    (p.category || "").toLowerCase().includes(q);
+                  const matchesCat =
+                    productAdminCat === "ALL" || p.category === productAdminCat;
+                  return matchesSearch && matchesCat;
+                })
+                .map((p) => {
+                  const stockNum = Number(p.stock_quantity || 0);
+                  const hasDiscount = Number(p.actual_price) > Number(p.price);
+                  const discPct = hasDiscount
+                    ? Math.round(
+                        ((Number(p.actual_price) - Number(p.price)) / Number(p.actual_price)) *
+                          100
+                      )
+                    : 0;
+                  return (
+                    <div
+                      key={p.id}
+                      className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition flex flex-col justify-between gap-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-[#14532D] text-[10px] font-extrabold uppercase">
+                              {p.category}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                stockNum <= 0
+                                  ? "bg-red-100 text-red-700"
+                                  : stockNum <= 35
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-emerald-100 text-emerald-800"
+                              }`}
+                            >
+                              {stockNum > 0
+                                ? `${p.stock_quantity} ${p.unit} in stock`
+                                : "Out of Stock"}
+                            </span>
+                            {hasDiscount && (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                                -{discPct}% OFF
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-extrabold text-sm sm:text-base text-slate-900 truncate">
+                            {p.name}
+                          </h4>
+                          {p.origin_location && (
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-emerald-700 shrink-0" />
+                              {p.origin_location}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setEditingProduct({ ...p })}
+                            className="p-2 text-emerald-700 bg-emerald-50/70 hover:bg-emerald-100 rounded-xl transition cursor-pointer"
+                            title="Edit Product Details, Actual Price or Selling Price"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteProduct(p.id, p.name)}
+                            className="p-2 text-red-600 bg-red-50/70 hover:bg-red-100 rounded-xl transition cursor-pointer"
+                            title="Delete Product"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t border-slate-100 flex items-baseline justify-between">
+                        <div>
+                          <span className="text-base font-black text-[#14532D]">
+                            रु {p.price}
+                          </span>
+                          <span className="text-xs text-slate-500"> / {p.unit}</span>
+                          {hasDiscount && (
+                            <span className="ml-2 text-xs text-slate-400 line-through font-semibold">
+                              रु {p.actual_price}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] font-bold text-slate-400">
+                          Batch #{p.id}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
           </div>
         </div>
       )}
@@ -2463,20 +2804,81 @@ const handleOrderStatus = async (orderId, status) => {
                     : "No orders match your search and filter criteria."}
                 </p>
               ) : (
-                displayedOrders.map((o) => (
+                displayedOrders.map((o) => {
+                  const { subtotal, discPct, discAmt, netPayable } = getOrderNetFinancials(o);
+                  const isEmailSent = Boolean(emailSentOrders[o.id]);
+                  return (
               <div
                 key={o.id}
-                className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50"
+                className="p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 hover:bg-slate-50/80 transition"
               >
-                <div>
-                  <p className="font-bold text-slate-900">
-                    Order #{o.id}: {o.product_name} ({o.quantity} {o.product_unit}) — रु{" "}
-                    {o.total_price}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Buyer: <strong>{o.buyer_name}</strong> | Phone: {o.contact_phone} | Delivery:{" "}
-                    {o.delivery_address}
-                  </p>
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-black">
+                      #KM-ORD-{o.id}
+                    </span>
+                    <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
+                      {o.product_name} ({o.quantity} {o.product_unit})
+                    </h4>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${
+                        o.status === "DELIVERED"
+                          ? "bg-emerald-100 text-[#14532D]"
+                          : o.status === "CONFIRMED"
+                          ? "bg-blue-100 text-blue-800"
+                          : o.status === "CANCELLED"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-900"
+                      }`}
+                    >
+                      {o.status}
+                    </span>
+                    {discPct > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                        🎉 {discPct}% Discount (-रु {discAmt.toFixed(2)})
+                      </span>
+                    )}
+                    {isEmailSent && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold">
+                        ✉️ Receipt Emailed
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                    <span>
+                      Buyer: <strong className="text-slate-800">{o.buyer_name}</strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Phone: <strong className="text-slate-800">{o.contact_phone}</strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Address: <strong className="text-slate-800">{o.delivery_address}</strong>
+                    </span>
+                    <span>•</span>
+                    <span className="text-slate-400">
+                      {new Date(o.created_at || Date.now()).toLocaleDateString()}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs pt-0.5">
+                    {discPct > 0 ? (
+                      <>
+                        <span className="text-slate-400 line-through">
+                          Subtotal: रु {subtotal.toFixed(2)}
+                        </span>
+                        <span className="font-black text-[#14532D] text-sm">
+                          Net Payable: रु {netPayable.toFixed(2)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="font-black text-[#14532D] text-sm">
+                        Total Payable: रु {subtotal.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {/* <div className="flex items-center gap-2">
                   <select
@@ -2535,7 +2937,8 @@ const handleOrderStatus = async (orderId, status) => {
                   </button>
                 </div>
               </div>
-            ))
+                  );
+                })
           )}
         </div>
         </div>
