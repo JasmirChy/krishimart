@@ -127,6 +127,8 @@ function getProductImage(product) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingUserData, setLoadingUserData] = useState(true);
   const [activeTab, setActiveTab] = useState(() =>
     window.location.pathname.toLowerCase().startsWith("/admin") ? "admin" : "home"
   );
@@ -504,11 +506,16 @@ export default function App() {
       setStories(storyRes.data);
     } catch (err) {
       console.error("Public data sync error:", err);
+    } finally {
+      setLoadingProducts(false);
     }
   };
 
   const loadUserData = async () => {
-    if (!isVerifiedOrAdmin) return;
+    if (!isVerifiedOrAdmin) {
+      setLoadingUserData(false);
+      return;
+    }
     try {
       const [subRes, ordRes, unreadRes, salesRes] = await Promise.all([
         isFarmer ? api.get("/marketplace/sell-submissions/") : Promise.resolve({ data: [] }),
@@ -522,6 +529,8 @@ export default function App() {
       setFarmerSales(salesRes.data);
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoadingUserData(false);
     }
   };
 
@@ -836,10 +845,70 @@ export default function App() {
     }
   };
 
+  // Facebook-Style Shimmer CSS Wave
+  const shimmerStyleTag = (
+    <style>{`
+      @keyframes kmFacebookShimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+      .km-shimmer {
+        background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 50%, #e2e8f0 75%);
+        background-size: 200% 100%;
+        animation: kmFacebookShimmer 1.4s infinite linear;
+      }
+    `}</style>
+  );
+
   if (checkingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F8FAF7] text-[#14532D] font-bold">
-        Loading KrishiMart...
+      <div className="min-h-screen bg-[#F6F8F5] flex flex-col font-sans">
+        {shimmerStyleTag}
+        {/* Top Utility Bar Skeleton */}
+        <div className="bg-[#0F3822] h-8 px-4 sm:px-8 flex items-center justify-between">
+          <div className="w-36 h-3 rounded-full bg-emerald-800/70 animate-pulse" />
+          <div className="w-28 h-3 rounded-full bg-emerald-800/70 animate-pulse" />
+        </div>
+        {/* Sticky Brand Header Skeleton */}
+        <div className="bg-white border-b border-slate-200 px-4 sm:px-8 py-3.5">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl km-shimmer" />
+              <div className="space-y-1.5">
+                <div className="w-32 h-4 rounded-md km-shimmer" />
+                <div className="w-24 h-2.5 rounded-md km-shimmer" />
+              </div>
+            </div>
+            <div className="hidden lg:block flex-1 max-w-md h-10 rounded-2xl km-shimmer" />
+            <div className="flex items-center gap-2.5">
+              <div className="w-24 h-9 rounded-xl km-shimmer" />
+              <div className="w-9 h-9 rounded-full km-shimmer" />
+            </div>
+          </div>
+        </div>
+        {/* Main Hero & Produce Grid Skeleton */}
+        <div className="max-w-7xl mx-auto w-full px-3 sm:px-8 py-6 space-y-6">
+          <div className="w-full h-52 sm:h-72 rounded-3xl km-shimmer" />
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
+            {[1, 2, 3, 4, 5, 6].map((n) => (
+              <div
+                key={n}
+                className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-4 border border-slate-200/80 space-y-3 shadow-2xs"
+              >
+                <div className="h-36 sm:h-48 rounded-xl sm:rounded-2xl km-shimmer" />
+                <div className="space-y-2">
+                  <div className="w-1/2 h-3 rounded km-shimmer" />
+                  <div className="w-3/4 h-4 rounded km-shimmer" />
+                  <div className="w-full h-3 rounded km-shimmer" />
+                </div>
+                <div className="pt-2 flex items-center justify-between">
+                  <div className="w-20 h-5 rounded km-shimmer" />
+                  <div className="w-24 h-8 rounded-xl km-shimmer" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -893,6 +962,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F6F8F5] text-slate-900 flex flex-col font-sans pb-20 md:pb-0 relative">
+      {shimmerStyleTag}
       {/* FLOATING TOAST NOTIFICATION */}
       {toast && (
         <div
@@ -1390,7 +1460,29 @@ export default function App() {
               })}
             </div>
 
-            {displayedSales.length === 0 ? (
+            {loadingUserData && farmerSales.length === 0 ? (
+              <div className="grid sm:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map((n) => (
+                  <div
+                    key={n}
+                    className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3"
+                  >
+                    <div className="flex justify-between">
+                      <div className="space-y-1.5">
+                        <div className="w-20 h-3 rounded km-shimmer" />
+                        <div className="w-40 h-5 rounded km-shimmer" />
+                      </div>
+                      <div className="w-24 h-6 rounded-full km-shimmer" />
+                    </div>
+                    <div className="h-20 rounded-2xl km-shimmer" />
+                    <div className="flex justify-between items-center pt-2">
+                      <div className="w-24 h-3.5 rounded km-shimmer" />
+                      <div className="w-28 h-8 rounded-xl km-shimmer" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : displayedSales.length === 0 ? (
               <div className="bg-white rounded-3xl p-10 text-center text-slate-500 border border-slate-200 space-y-2">
                 <Receipt className="w-10 h-10 text-slate-300 mx-auto" />
                 <p className="text-sm font-bold text-slate-700">
@@ -1978,7 +2070,33 @@ export default function App() {
               })}
             </div>
 
-            {displayedOrders.length === 0 ? (
+            {loadingUserData && myOrders.length === 0 ? (
+              <div className="space-y-3.5">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs space-y-3.5"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-5 rounded-md km-shimmer" />
+                          <div className="w-44 h-5 rounded-md km-shimmer" />
+                          <div className="w-20 h-5 rounded-full km-shimmer" />
+                        </div>
+                        <div className="w-3/4 h-3.5 rounded km-shimmer" />
+                        <div className="w-32 h-3 rounded km-shimmer" />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 h-7 rounded-lg km-shimmer" />
+                        <div className="w-24 h-9 rounded-xl km-shimmer" />
+                      </div>
+                    </div>
+                    <div className="h-14 rounded-xl km-shimmer" />
+                  </div>
+                ))}
+              </div>
+            ) : displayedOrders.length === 0 ? (
               <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
                 <PackageCheck className="w-10 h-10 text-slate-400 mx-auto" />
                 <p className="text-sm font-bold text-slate-700">
@@ -3623,7 +3741,34 @@ export default function App() {
                   </div>
                 </div>
 
-                {filteredProducts.length === 0 ? (
+                {loadingProducts && dbProducts.length === 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-6">
+                    {[1, 2, 3, 4, 5, 6].map((n) => (
+                      <div
+                        key={n}
+                        className="bg-white rounded-2xl sm:rounded-3xl p-2.5 sm:p-3.5 border border-slate-200/90 shadow-2xs space-y-3"
+                      >
+                        <div className="h-36 sm:h-52 rounded-xl sm:rounded-2xl km-shimmer" />
+                        <div className="px-1 space-y-2">
+                          <div className="flex justify-between">
+                            <div className="w-20 h-3 rounded km-shimmer" />
+                            <div className="w-12 h-3 rounded km-shimmer hidden sm:block" />
+                          </div>
+                          <div className="w-4/5 h-4 sm:h-5 rounded km-shimmer" />
+                          <div className="w-full h-3 rounded km-shimmer" />
+                          <div className="pt-1 flex items-center justify-between">
+                            <div className="w-16 h-5 sm:h-6 rounded km-shimmer" />
+                            <div className="w-14 h-4 rounded km-shimmer hidden sm:block" />
+                          </div>
+                        </div>
+                        <div className="pt-2 border-t border-slate-100 flex gap-2">
+                          <div className="flex-1 h-9 rounded-xl km-shimmer" />
+                          <div className="w-9 h-9 rounded-xl km-shimmer" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : filteredProducts.length === 0 ? (
                   <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
                     <p className="text-sm font-bold text-slate-700">
                       No harvest batches match your current filter.

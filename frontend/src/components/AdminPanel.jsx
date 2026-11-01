@@ -31,6 +31,7 @@ export default function AdminPanel() {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [stories, setStories] = useState([]);
+  const [loadingAdmin, setLoadingAdmin] = useState(true);
   const [toast, setToast] = useState(null);
 
   // User search & filter states
@@ -177,6 +178,8 @@ export default function AdminPanel() {
       );
     } catch (err) {
       console.error("Admin auto-sync error:", err);
+    } finally {
+      setLoadingAdmin(false);
     }
   };
 
@@ -927,6 +930,17 @@ const handleOrderStatus = async (orderId, status) => {
 
   return (
     <div className="space-y-6 relative">
+      <style>{`
+        @keyframes kmAdminShimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .km-shimmer {
+          background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 50%, #e2e8f0 75%);
+          background-size: 200% 100%;
+          animation: kmAdminShimmer 1.4s infinite linear;
+        }
+      `}</style>
       {/* Toast Notification */}
       {toast && (
         <div
@@ -1016,7 +1030,44 @@ const handleOrderStatus = async (orderId, status) => {
         </div>
       </div>
 
-      {/* Top Financial & Procurement Analytics */}
+      {/* Top Financial & Procurement Analytics (With Facebook Shimmer Loader on Initial Sync) */}
+      {loadingAdmin ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((n) => (
+              <div
+                key={n}
+                className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-2.5"
+              >
+                <div className="w-28 h-3 rounded km-shimmer" />
+                <div className="w-36 h-7 rounded-lg km-shimmer" />
+                <div className="w-24 h-3 rounded km-shimmer" />
+              </div>
+            ))}
+          </div>
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xs space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="w-48 h-6 rounded-lg km-shimmer" />
+              <div className="w-32 h-8 rounded-xl km-shimmer" />
+            </div>
+            {[1, 2, 3, 4].map((row) => (
+              <div
+                key={row}
+                className="p-4 rounded-2xl border border-slate-100 flex items-center justify-between gap-4"
+              >
+                <div className="flex items-center gap-3 flex-1">
+                  <div className="w-11 h-11 rounded-full km-shimmer shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <div className="w-44 h-4 rounded km-shimmer" />
+                    <div className="w-64 h-3 rounded km-shimmer" />
+                  </div>
+                </div>
+                <div className="w-28 h-8 rounded-xl km-shimmer" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
           <span className="text-xs font-bold text-slate-400 uppercase">Customer Sales Revenue</span>
@@ -1057,6 +1108,8 @@ const handleOrderStatus = async (orderId, status) => {
           </span>
         </div>
       </div>
+
+      )}
 
       {/* 1. USERS & VERIFICATION TAB (WITH PROFILE PICTURES) */}
       {subTab === "users" && (
