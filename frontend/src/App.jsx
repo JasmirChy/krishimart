@@ -290,6 +290,164 @@ export default function App() {
   const chatTabScrollRef = useRef(null);
   const chatDrawerScrollRef = useRef(null);
 
+  // ==============================================================================
+  // DARAZ-STYLE 1-STEP BROWSER & MOBILE HARDWARE BACK BUTTON NAVIGATION
+  // ==============================================================================
+  const isPopstateNavRef = useRef(false);
+  const isManualCloseRef = useRef(false);
+
+  const activeTabRef = useRef(activeTab);
+  const quickViewProductRef = useRef(quickViewProduct);
+  const basketDrawerOpenRef = useRef(basketDrawerOpen);
+  const activeSlipRef = useRef(activeSlip);
+  const storyModalOpenRef = useRef(storyModalOpen);
+  const profileModalOpenRef = useRef(profileModalOpen);
+  const authModalOpenRef = useRef(authModalOpen);
+  const chatDrawerOpenRef = useRef(chatDrawerOpen);
+
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { quickViewProductRef.current = quickViewProduct; }, [quickViewProduct]);
+  useEffect(() => { basketDrawerOpenRef.current = basketDrawerOpen; }, [basketDrawerOpen]);
+  useEffect(() => { activeSlipRef.current = activeSlip; }, [activeSlip]);
+  useEffect(() => { storyModalOpenRef.current = storyModalOpen; }, [storyModalOpen]);
+  useEffect(() => { profileModalOpenRef.current = profileModalOpen; }, [profileModalOpen]);
+  useEffect(() => { authModalOpenRef.current = authModalOpen; }, [authModalOpen]);
+  useEffect(() => { chatDrawerOpenRef.current = chatDrawerOpen; }, [chatDrawerOpen]);
+
+  // Synchronize history entries when opening or closing modals/drawers/views
+  const syncOpenLayer = (layerName, meta = {}) => {
+    if (!isPopstateNavRef.current) {
+      window.history.pushState({ layer: layerName, ...meta }, "");
+    }
+  };
+
+  const syncCloseLayer = (layerName) => {
+    if (!isPopstateNavRef.current && window.history.state?.layer === layerName) {
+      isManualCloseRef.current = true;
+      window.history.back();
+    }
+  };
+
+  // Push history entry for Basket Drawer
+  useEffect(() => {
+    if (basketDrawerOpen) {
+      syncOpenLayer("basket");
+    } else {
+      syncCloseLayer("basket");
+    }
+  }, [basketDrawerOpen]);
+
+  // Push history entry for 1/4 A4 Printable Slip Modal
+  useEffect(() => {
+    if (activeSlip) {
+      syncOpenLayer("slip", { id: activeSlip.id });
+    } else {
+      syncCloseLayer("slip");
+    }
+  }, [activeSlip]);
+
+  // Push history entry for Full-Page Product Detail View
+  useEffect(() => {
+    if (quickViewProduct) {
+      syncOpenLayer("product", { id: quickViewProduct.id });
+    } else {
+      syncCloseLayer("product");
+    }
+  }, [quickViewProduct]);
+
+  // Push history entry for Review / Story Modal
+  useEffect(() => {
+    if (storyModalOpen) {
+      syncOpenLayer("story");
+    } else {
+      syncCloseLayer("story");
+    }
+  }, [storyModalOpen]);
+
+  // Push history entry for Profile / Change Password Modal
+  useEffect(() => {
+    if (profileModalOpen) {
+      syncOpenLayer("profile");
+    } else {
+      syncCloseLayer("profile");
+    }
+  }, [profileModalOpen]);
+
+  // Push history entry for Auth Modal (Sign In / Register)
+  useEffect(() => {
+    if (authModalOpen) {
+      syncOpenLayer("auth");
+    } else {
+      syncCloseLayer("auth");
+    }
+  }, [authModalOpen]);
+
+  // Push history entry for Floating Mobile Chat Drawer
+  useEffect(() => {
+    if (chatDrawerOpen) {
+      syncOpenLayer("chat");
+    } else {
+      syncCloseLayer("chat");
+    }
+  }, [chatDrawerOpen]);
+
+  // Push history entry when navigating to inner tabs away from Home
+  useEffect(() => {
+    if (activeTab !== "home") {
+      syncOpenLayer("tab", { tab: activeTab });
+    } else {
+      syncCloseLayer("tab");
+    }
+  }, [activeTab]);
+
+  // Listen to browser/mobile hardware Back button (popstate event)
+  useEffect(() => {
+    if (!window.history.state || !window.history.state.layer) {
+      window.history.replaceState({ layer: "base", tab: "home" }, "");
+    }
+
+    const handlePopState = () => {
+      // If close was triggered manually (e.g. clicking the X button), do not double-close
+      if (isManualCloseRef.current) {
+        isManualCloseRef.current = false;
+        return;
+      }
+
+      isPopstateNavRef.current = true;
+
+      // Close exactly ONE level at a time in strict hierarchical order:
+      // Level 1: Drawers and Modals (Basket, Slip, Story, Profile, Auth, Chat)
+      // Level 2: Full-Page Product Detail View
+      // Level 3: Inner Tabs (Marketplace, Orders, Farmer Sales, Sell, Admin) back to Home
+      if (basketDrawerOpenRef.current) {
+        setBasketDrawerOpen(false);
+      } else if (activeSlipRef.current) {
+        setActiveSlip(null);
+      } else if (storyModalOpenRef.current) {
+        setStoryModalOpen(false);
+        setReviewTargetProduct(null);
+      } else if (profileModalOpenRef.current) {
+        setProfileModalOpen(false);
+      } else if (authModalOpenRef.current) {
+        setAuthModalOpen(false);
+      } else if (chatDrawerOpenRef.current) {
+        setChatDrawerOpen(false);
+      } else if (quickViewProductRef.current) {
+        setQuickViewProduct(null);
+      } else if (activeTabRef.current !== "home") {
+        setActiveTab("home");
+      }
+
+      // Re-enable history pushing after React finishes updating
+      setTimeout(() => {
+        isPopstateNavRef.current = false;
+      }, 60);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const showToast = (message, type = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -687,7 +845,24 @@ export default function App() {
   const totalFarmerWeight = farmerSales.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
 
   const approvedFarmerStories = stories.filter((s) => s.story_type === "FARMER_STORY");
-  const approvedBuyerReviews = stories.filter((s) => s.story_type === "BUYER_REVIEW");
+
+  // Helper to determine if a review is an individual product purchase review
+  const isProductPurchaseReview = (s) => {
+    if (s.product_id || s.product_name || s.order_id) return true;
+    const titleLower = (s.title || "").toLowerCase();
+    const contentLower = (s.content || "").toLowerCase();
+    return (Array.isArray(dbProducts) ? dbProducts : []).some(
+      (p) =>
+        p.name &&
+        (titleLower.includes(p.name.toLowerCase()) || contentLower.includes(p.name.toLowerCase()))
+    );
+  };
+
+  // Only general platform testimonials appear on the homepage; individual product purchase reviews
+  // appear strictly and exclusively on their respective product detail pages!
+  const generalPlatformReviews = stories.filter(
+    (s) => s.story_type === "BUYER_REVIEW" && !isProductPurchaseReview(s)
+  );
 
   return (
     <div className="min-h-screen bg-[#F6F8F5] text-slate-900 flex flex-col font-sans pb-20 md:pb-0 relative">
@@ -3289,7 +3464,7 @@ export default function App() {
               </section>
             )}
 
-            {/* 9. FARMER SPOTLIGHT & REAL BUYER REVIEWS SECTION */}
+            {/* 9. FARMER SPOTLIGHT & COMMUNITY VOICES (PRODUCT REVIEWS APPEAR EXCLUSIVELY ON PRODUCT PAGES) */}
             <section className="max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-8">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
@@ -3297,14 +3472,20 @@ export default function App() {
                     COMMUNITY VOICES
                   </span>
                   <h2 className="text-xl sm:text-3xl font-black text-slate-900">
-                    Farmer Stories & Buyer Reviews
+                    Farmer Stories & Community Experiences
                   </h2>
                 </div>
                 <button
-                  onClick={() => requireAuth(() => setStoryModalOpen(true))}
+                  onClick={() =>
+                    requireAuth(() => {
+                      setReviewTargetProduct(null);
+                      setStoryForm({ title: "", content: "", rating: 5 });
+                      setStoryModalOpen(true);
+                    })
+                  }
                   className="px-5 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold shadow-sm cursor-pointer"
                 >
-                  + Share Your Story or Review
+                  + Share Your Story
                 </button>
               </div>
 
@@ -3417,10 +3598,10 @@ export default function App() {
                 )}
               </div>
 
-              {/* Approved Buyer Reviews Grid */}
-              {approvedBuyerReviews.length > 0 && (
+              {/* General Platform Testimonials (Individual product purchase reviews appear ONLY on product detail pages) */}
+              {generalPlatformReviews.length > 0 && (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4">
-                  {approvedBuyerReviews.map((br) => (
+                  {generalPlatformReviews.map((br) => (
                     <div
                       key={br.id}
                       className="bg-white rounded-3xl p-5 border border-slate-200 space-y-2.5"
