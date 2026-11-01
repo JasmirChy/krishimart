@@ -50,11 +50,14 @@ export default function AdminPanel() {
 
   const [storyFilter, setStoryFilter] = useState("ALL"); // "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "FARMER_STORY" | "BUYER_REVIEW" 
 
-  // Admin Chat state
+  // Admin Chat state (Messenger Inbox)
   const [threads, setThreads] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [replyText, setReplyText] = useState("");
+  const [chatThreadSearch, setChatThreadSearch] = useState("");
+  const [chatThreadFilter, setChatThreadFilter] = useState("ALL"); // "ALL" | "UNREAD" | "FARMER" | "CUSTOMER"
+  const [adminChatActionMsg, setAdminChatActionMsg] = useState(null);
   const chatContainerRef = useRef(null);
 
   // "Buy from Farmer" Procurement Modal State
@@ -154,7 +157,10 @@ export default function AdminPanel() {
       setOrders(oRes.data);
       setThreads(tRes.data);
       setStories(storyRes.data);
-      setSelectedUser((prev) => prev || (tRes.data.length > 0 ? tRes.data[0] : null));
+      // Never auto-open a chat without the Admin clicking it; only refresh metadata if already open
+      setSelectedUser((prev) =>
+        prev ? tRes.data.find((u) => u.id === prev.id) || prev : null
+      );
     } catch (err) {
       console.error("Admin auto-sync error:", err);
     }
@@ -167,9 +173,9 @@ export default function AdminPanel() {
     return () => clearInterval(interval);
   }, []);
 
-  // Poll chat messages for selected user
+  // Poll chat messages ONLY when Admin has the Chat tab open AND clicked a user
   useEffect(() => {
-    if (!selectedUser) return;
+    if (!selectedUser || subTab !== "chat") return;
     const loadChat = async () => {
       try {
         const [msgRes, threadRes] = await Promise.all([
@@ -185,7 +191,7 @@ export default function AdminPanel() {
     loadChat();
     const interval = setInterval(loadChat, 3000);
     return () => clearInterval(interval);
-  }, [selectedUser?.id]);
+  }, [selectedUser?.id, subTab]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -858,22 +864,41 @@ const handleOrderStatus = async (orderId, status) => {
     }
   };
 
-  const handleClearChatThread = async () => {
+  const handleClearChatThread = async (mode = "everyone") => {
     if (!selectedUser || chatMessages.length === 0) return;
     try {
-      await api.delete(`/chat/messages/clear_thread/?user_id=${selectedUser.id}`);
+      await api.delete(
+        `/chat/messages/clear_thread/?user_id=${selectedUser.id}&mode=${mode}`
+      );
       setChatMessages([]);
-      showToast(`Cleared chat history with ${selectedUser.full_name}.`);
+      showToast(
+        mode === "me"
+          ? `Cleared chat with ${selectedUser.full_name} from your view.`
+          : `Cleared entire conversation with ${selectedUser.full_name} for everyone.`
+      );
       fetchAllAdminData();
     } catch {
       showToast("Failed to clear chat history.", "error");
     }
   };
 
-  const handleDeleteSingleMessage = async (msgId) => {
+  const handleDeleteSingleMessage = async (msgId, mode = "everyone") => {
     try {
-      await api.delete(`/chat/messages/${msgId}/`);
-      setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
+      await api.delete(`/chat/messages/${msgId}/?mode=${mode}`);
+      if (mode === "me") {
+        setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
+        showToast("Message removed from your view.");
+      } else {
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? { ...m, message: "🚫 This message was unsent", is_unsent: true }
+              : m
+          )
+        );
+        showToast("Message unsent for everyone.");
+      }
+      setAdminChatActionMsg(null);
     } catch {
       showToast("Could not delete message.", "error");
     }
@@ -2444,189 +2469,577 @@ const handleOrderStatus = async (orderId, status) => {
         );
       })()}
 
-      {/* 7. LIVE CHAT INBOX TAB */}
-      {subTab === "chat" && (
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 grid md:grid-cols-3 overflow-hidden">
-          <div className="border-b md:border-b-0 md:border-r border-slate-200 flex flex-col max-h-56 md:max-h-[560px]">
-            <div className="p-4 border-b border-slate-100 font-bold text-sm text-slate-800 bg-slate-50 shrink-0">
-              Buyers & Farmers ({threads.length})
-            </div>
-            <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
-              {threads.map((u) => (
-                <button
-                  key={u.id}
-                  onClick={() => setSelectedUser(u)}
-                  className={`w-full text-left p-3 hover:bg-emerald-50/60 transition flex items-center justify-between gap-2.5 cursor-pointer ${
-                    selectedUser?.id === u.id
-                      ? "bg-emerald-50 border-l-4 border-l-[#1B4332]"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 truncate">
-                    <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden shrink-0">
-                      {u.profile_picture ? (
-                        <img
-                          src={
-                            u.profile_picture.startsWith("http")
-                              ? u.profile_picture
-                              : `${BACKEND_URL}${u.profile_picture}`
-                          }
-                          alt={u.full_name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span>{u.full_name?.charAt(0).toUpperCase()}</span>
-                      )}
-                    </div>
-                    <div className="truncate leading-tight">
-                      <p className="font-bold text-xs sm:text-sm text-slate-900 truncate">
-                        {u.full_name}
-                      </p>
-                      <p className="text-[11px] text-slate-500 truncate">
-                        {u.role} • {u.location || u.phone_number || u.email}
-                      </p>
-                    </div>
-                  </div>
-                  {u.unread_count > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-extrabold shrink-0">
-                      {u.unread_count}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* 7. WHATSAPP WEB / FACEBOOK MESSENGER-STYLE ADMIN LIVE CHAT INBOX */}
+      {subTab === "chat" && (() => {
+        const filteredThreads = threads.filter((u) => {
+          const q = chatThreadSearch.toLowerCase();
+          const matchesSearch =
+            (u.full_name || "").toLowerCase().includes(q) ||
+            (u.phone_number || "").includes(chatThreadSearch) ||
+            (u.location || "").toLowerCase().includes(q) ||
+            (u.email || "").toLowerCase().includes(q);
+          if (!matchesSearch) return false;
+          if (chatThreadFilter === "UNREAD") return (u.unread_count || 0) > 0;
+          if (chatThreadFilter === "FARMER") return u.role === "FARMER";
+          if (chatThreadFilter === "CUSTOMER") return u.role === "CUSTOMER";
+          return true;
+        });
 
-          <div className="md:col-span-2 flex flex-col h-[500px] md:h-[560px] min-h-0">
-            {selectedUser ? (
-              <>
-                <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden shrink-0">
-                      {selectedUser.profile_picture ? (
-                        <img
-                          src={
-                            selectedUser.profile_picture.startsWith("http")
-                              ? selectedUser.profile_picture
-                              : `${BACKEND_URL}${selectedUser.profile_picture}`
-                          }
-                          alt={selectedUser.full_name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span>{selectedUser.full_name?.charAt(0).toUpperCase()}</span>
-                      )}
+        return (
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-xl border border-slate-200/90 grid grid-cols-1 md:grid-cols-12 overflow-hidden h-[calc(100vh-180px)] min-h-[540px] max-h-[680px]">
+            {/* Left 4 Columns: WhatsApp / Messenger Conversation List (Full-Screen on Mobile when no user is selected) */}
+            <div
+              className={`md:col-span-4 border-r border-slate-200 flex-col h-full min-h-0 bg-white ${
+                selectedUser ? "hidden md:flex" : "flex"
+              }`}
+            >
+              {/* Left Sidebar Header */}
+              <div className="p-3.5 border-b border-slate-200 bg-[#F0F2F5] space-y-2.5 shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-[#14532D] text-amber-300 flex items-center justify-center font-black text-xs">
+                      💬
                     </div>
                     <div>
-                      <p className="font-bold text-sm text-slate-900">{selectedUser.full_name}</p>
-                      <p className="text-[11px] text-slate-500">
-                        {selectedUser.role} • {selectedUser.location || "No location set"}
+                      <h4 className="font-extrabold text-sm text-slate-900 leading-tight">
+                        Chats ({threads.length})
+                      </h4>
+                      <p className="text-[10px] text-slate-500">
+                        Farmers & Buyers Direct Inbox
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                      {chatMessages.length} messages
+                  {totalUnreadChats > 0 && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-black shadow-2xs">
+                      {totalUnreadChats} Unread
                     </span>
-                    {chatMessages.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleClearChatThread}
-                        className="px-2.5 py-1 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-                        title="Clear Entire Conversation"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> Clear Chat
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div
-                  ref={chatContainerRef}
-                  className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3 bg-[#F8FAF7]"
-                >
-                  {chatMessages.length === 0 ? (
-                    <p className="text-center text-xs text-slate-400 mt-12">
-                      No messages in this conversation yet. Say hello!
-                    </p>
-                  ) : (
-                    chatMessages.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`flex ${m.is_from_admin ? "justify-end" : "justify-start"}`}
-                      >
-                        <div
-                          className={`max-w-xs sm:max-w-md px-4 py-2.5 rounded-2xl text-sm shadow-2xs ${
-                            m.is_from_admin
-                              ? "bg-[#1B4332] text-white rounded-br-none"
-                              : "bg-white border border-slate-200 text-slate-800 rounded-bl-none"
-                          }`}
-                        >
-                          <p className="break-words">{m.message}</p>
-                          <span className="block text-[10px] opacity-75 mt-1">
-                            {m.is_from_admin
-                              ? "KrishiMart Admin (You)"
-                              : m.conversation_user_name}{" "}
-                            •{" "}
-                            {new Date(m.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                          <span className="flex items-center justify-between gap-3 text-[10px] opacity-75 mt-1">
-                              <span>
-                                {m.is_from_admin
-                                  ? "KrishiMart Admin (You)"
-                                  : m.conversation_user_name}{" "}
-                                •{" "}
-                                {new Date(m.created_at).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteSingleMessage(m.id)}
-                                className="hover:text-red-400 cursor-pointer"
-                                title="Delete this message"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </span>
-                      </div>
-                      
-                    ))
                   )}
                 </div>
 
-                <form
-                  onSubmit={handleSendAdminReply}
-                  className="p-3.5 border-t border-slate-200 flex gap-2 bg-white shrink-0"
-                >
+                {/* Search Input */}
+                <div className="relative">
                   <input
                     type="text"
-                    placeholder={`Reply to ${selectedUser.full_name}...`}
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-[#1B4332]"
+                    placeholder="Search or start new chat..."
+                    value={chatThreadSearch}
+                    onChange={(e) => setChatThreadSearch(e.target.value)}
+                    className="w-full pl-8 pr-7 py-2 rounded-xl bg-white border border-slate-200/90 text-xs outline-none focus:border-[#14532D] shadow-2xs"
                   />
-                  <button
-                    type="submit"
-                    className="px-5 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-sm font-semibold flex items-center gap-1.5 cursor-pointer shrink-0"
-                  >
-                    <Send className="w-4 h-4" /> Send
-                  </button>
-                </form>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
-                Select a Buyer or Farmer to view and reply to messages.
+                  <span className="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
+                  {chatThreadSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setChatThreadSearch("")}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                  {[
+                    { id: "ALL", label: "All" },
+                    { id: "UNREAD", label: `Unread (${totalUnreadChats})` },
+                    { id: "FARMER", label: "🌾 Farmers" },
+                    { id: "CUSTOMER", label: "🛒 Buyers" },
+                  ].map((ft) => (
+                    <button
+                      key={ft.id}
+                      type="button"
+                      onClick={() => setChatThreadFilter(ft.id)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold whitespace-nowrap transition cursor-pointer ${
+                        chatThreadFilter === ft.id
+                          ? "bg-[#14532D] text-white shadow-2xs"
+                          : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {ft.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
+
+              {/* Scrollable Thread List */}
+              <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
+                {filteredThreads.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-slate-400">
+                    No conversations match your search.
+                  </p>
+                ) : (
+                  filteredThreads.map((u) => {
+                    const isSelected = selectedUser?.id === u.id;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setSelectedUser(u)}
+                        className={`w-full text-left px-3.5 py-3 hover:bg-slate-50 transition flex items-center justify-between gap-2.5 cursor-pointer ${
+                          isSelected
+                            ? "bg-emerald-50/90 border-l-4 border-l-[#14532D]"
+                            : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="relative shrink-0">
+                            <div className="w-11 h-11 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-sm overflow-hidden shadow-2xs">
+                              {u.profile_picture ? (
+                                <img
+                                  src={
+                                    u.profile_picture.startsWith("http")
+                                      ? u.profile_picture
+                                      : `${BACKEND_URL}${u.profile_picture}`
+                                  }
+                                  alt={u.full_name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <span>{u.full_name?.charAt(0).toUpperCase()}</span>
+                              )}
+                            </div>
+                            <span
+                              className={`w-3 h-3 rounded-full border-2 border-white absolute bottom-0 right-0 ${
+                                u.is_admin_verified ? "bg-emerald-500" : "bg-amber-400"
+                              }`}
+                            />
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <p
+                                  className={`text-xs sm:text-sm truncate ${
+                                    u.unread_count > 0
+                                      ? "font-black text-slate-950"
+                                      : "font-bold text-slate-800"
+                                  }`}
+                                >
+                                  {u.full_name}
+                                </p>
+                                <span
+                                  className={`px-1.5 py-0.2 rounded text-[9px] font-black uppercase shrink-0 ${
+                                    u.role === "FARMER"
+                                      ? "bg-emerald-100 text-[#14532D]"
+                                      : "bg-blue-100 text-blue-800"
+                                  }`}
+                                >
+                                  {u.role}
+                                </span>
+                              </div>
+                              {u.last_message_time && (
+                                <span
+                                  className={`text-[10px] shrink-0 ${
+                                    u.unread_count > 0
+                                      ? "font-extrabold text-emerald-700"
+                                      : "text-slate-400"
+                                  }`}
+                                >
+                                  {new Date(u.last_message_time).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
+                              <p
+                                className={`text-[11px] truncate ${
+                                  u.unread_count > 0
+                                    ? "font-bold text-slate-900"
+                                    : "text-slate-500"
+                                }`}
+                              >
+                                {u.last_message_preview
+                                  ? u.last_message_preview
+                                  : `📍 ${u.location || u.phone_number || u.email}`}
+                              </p>
+                              {u.unread_count > 0 && (
+                                <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black shrink-0">
+                                  {u.unread_count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Right 8 Columns: Active WhatsApp / Messenger Conversation Window */}
+            <div
+              className={`md:col-span-8 flex-col h-full min-h-0 ${
+                selectedUser ? "flex" : "hidden md:flex"
+              }`}
+            >
+              {selectedUser ? (
+                <>
+                  {/* Conversation Top Header (With Mobile ← Back Button) */}
+                  <div className="px-3.5 sm:px-5 py-3 border-b border-slate-200 bg-[#F0F2F5] flex items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedUser(null)}
+                        className="md:hidden px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-extrabold text-xs flex items-center gap-1 shadow-2xs cursor-pointer shrink-0"
+                      >
+                        ← Chats
+                      </button>
+
+                      <div className="relative shrink-0">
+                        <div className="w-10 h-10 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs overflow-hidden shadow-2xs">
+                          {selectedUser.profile_picture ? (
+                            <img
+                              src={
+                                selectedUser.profile_picture.startsWith("http")
+                                  ? selectedUser.profile_picture
+                                  : `${BACKEND_URL}${selectedUser.profile_picture}`
+                              }
+                              alt={selectedUser.full_name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span>{selectedUser.full_name?.charAt(0).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white absolute bottom-0 right-0" />
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">
+                            {selectedUser.full_name}
+                          </p>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
+                              selectedUser.role === "FARMER"
+                                ? "bg-emerald-100 text-[#14532D]"
+                                : "bg-blue-100 text-blue-800"
+                            }`}
+                          >
+                            {selectedUser.role}
+                          </span>
+                        </div>
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 truncate">
+                          📍 {selectedUser.location || "Nepal"} • 📞{" "}
+                          {selectedUser.phone_number || "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {chatMessages.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleClearChatThread("me")}
+                          className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-2xs"
+                          title="Clear this conversation from your Admin view only"
+                        >
+                          <Trash2 className="w-3 h-3 text-slate-500" />
+                          <span className="hidden sm:inline">Clear for Me</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedUser(null)}
+                        className="p-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 hover:text-slate-800 transition cursor-pointer shadow-2xs"
+                        title="Close conversation"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* WhatsApp / Messenger Messages Stream */}
+                  <div
+                    ref={chatContainerRef}
+                    className="flex-1 min-h-0 p-3.5 sm:p-5 overflow-y-auto space-y-2.5 bg-[#EFEAE2]"
+                  >
+                    <div className="text-center pb-1">
+                      <span className="inline-block px-3 py-1 rounded-xl bg-[#FFF8C5] border border-amber-200/80 text-[10px] font-bold text-slate-700 shadow-2xs">
+                        🔒 Direct Support Thread with {selectedUser.full_name} ({selectedUser.role})
+                      </span>
+                    </div>
+
+                    {chatMessages.length === 0 ? (
+                      <div className="bg-white/95 rounded-2xl p-6 text-center max-w-sm mx-auto mt-12 border border-slate-200/80 space-y-1.5 shadow-2xs">
+                        <p className="text-xs font-extrabold text-slate-700">
+                          No messages with {selectedUser.full_name} yet
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          Send a message or tap a quick reply below to start the conversation.
+                        </p>
+                      </div>
+                    ) : (
+                      chatMessages.map((m, idx) => {
+                        const isUnsent =
+                          Boolean(m.is_unsent) || m.message === "🚫 This message was unsent";
+                        const fromAdmin = Boolean(m.is_from_admin || m.is_admin_reply);
+                        const msgDateStr = new Date(m.created_at).toLocaleDateString([], {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        });
+                        const prevDateStr =
+                          idx > 0
+                            ? new Date(chatMessages[idx - 1].created_at).toLocaleDateString([], {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })
+                            : null;
+                        const showDateChip = idx === 0 || msgDateStr !== prevDateStr;
+                        const displayText = isUnsent
+                          ? fromAdmin
+                            ? "🚫 You unsent a message"
+                            : `🚫 ${selectedUser.full_name} unsent a message`
+                          : m.message;
+
+                        return (
+                          <React.Fragment key={m.id}>
+                            {showDateChip && (
+                              <div className="flex justify-center my-2">
+                                <span className="px-3 py-0.5 rounded-full bg-white/90 text-slate-600 text-[10px] font-extrabold shadow-2xs border border-slate-200/60">
+                                  {msgDateStr}
+                                </span>
+                              </div>
+                            )}
+                            <div
+                              className={`flex items-end gap-2 group ${
+                                fromAdmin ? "justify-end" : "justify-start"
+                              }`}
+                            >
+                              {/* User Avatar on Left of Incoming User Messages */}
+                              {!fromAdmin && (
+                                <div className="w-7 h-7 rounded-full bg-emerald-800 text-white font-bold text-[11px] flex items-center justify-center shrink-0 shadow-2xs">
+                                  {(selectedUser.full_name || "U").charAt(0).toUpperCase()}
+                                </div>
+                              )}
+
+                              {/* Delete/Unsend Action Button on Left of Admin's Outgoing Bubble */}
+                              {fromAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAdminChatActionMsg(m)}
+                                  className="opacity-85 sm:opacity-0 group-hover:opacity-100 p-1.5 rounded-full bg-white/90 hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-1 shrink-0"
+                                  title="Unsend or Delete Options"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {/* WhatsApp / Messenger Bubble */}
+                              <div
+                                className={`max-w-[78%] sm:max-w-md px-3.5 py-2 rounded-2xl text-xs sm:text-sm shadow-xs ${
+                                  isUnsent
+                                    ? "bg-white/80 border border-dashed border-slate-300 text-slate-400 italic"
+                                    : fromAdmin
+                                    ? "bg-[#14532D] text-white rounded-br-xs"
+                                    : "bg-white border border-slate-100 text-slate-900 rounded-bl-xs"
+                                }`}
+                              >
+                                {!fromAdmin && !isUnsent && (
+                                  <p className="text-[10px] font-extrabold text-emerald-700 mb-0.5">
+                                    {selectedUser.full_name}
+                                  </p>
+                                )}
+                                <p className="break-words leading-relaxed">{displayText}</p>
+                                <div
+                                  className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${
+                                    isUnsent || !fromAdmin ? "text-slate-400" : "text-emerald-200"
+                                  }`}
+                                >
+                                  <span>
+                                    {new Date(m.created_at).toLocaleTimeString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
+                                  {fromAdmin && !isUnsent && (
+                                    <span
+                                      className={`font-black ${
+                                        m.is_read ? "text-amber-300" : "text-emerald-200"
+                                      }`}
+                                    >
+                                      {m.is_read ? "✓✓ Seen" : "✓ Sent"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Delete for Me Action Button on Right of User's Incoming Bubble */}
+                              {!fromAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAdminChatActionMsg(m)}
+                                  className="opacity-85 sm:opacity-0 group-hover:opacity-100 p-1.5 rounded-full bg-white/90 hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-1 shrink-0"
+                                  title="Delete for Me"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </React.Fragment>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Admin 1-Tap Quick Replies Bar */}
+                  <div className="px-3 py-2 bg-white border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+                    {(selectedUser.role === "FARMER"
+                      ? [
+                          "🌾 Namaste! We reviewed and approved your harvest offer.",
+                          "💳 Your farmer payout has been settled (PAID).",
+                          "🚚 Our pickup vehicle will arrive at your farm today.",
+                        ]
+                      : [
+                          "✓ Namaste! Your order is confirmed and being packed.",
+                          "🚚 Your order is out for delivery today!",
+                          "🎉 We applied a special discount to your order receipt.",
+                        ]
+                    ).map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => setReplyText(chip)}
+                        className="px-3 py-1 rounded-full bg-slate-100 hover:bg-emerald-50 border border-slate-200 text-slate-700 hover:text-[#14532D] text-[11px] font-bold whitespace-nowrap transition cursor-pointer shrink-0"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* WhatsApp / Messenger Reply Composer */}
+                  <form
+                    onSubmit={handleSendAdminReply}
+                    className="p-2.5 sm:p-3.5 border-t border-slate-200 flex items-center gap-2 bg-[#F0F2F5] shrink-0"
+                  >
+                    <input
+                      type="text"
+                      placeholder={`Type a message to ${selectedUser.full_name}...`}
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      className="flex-1 px-4 py-2.5 rounded-full bg-white border border-slate-200 focus:border-[#1B4332] text-xs sm:text-sm outline-none transition shadow-2xs"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!replyText.trim()}
+                      className="px-4 sm:px-5 py-2.5 bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white rounded-full text-xs sm:text-sm font-extrabold flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0"
+                    >
+                      <Send className="w-4 h-4" />
+                      <span className="hidden sm:inline">Send</span>
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center space-y-2.5 bg-[#EFEAE2]">
+                  <div className="w-14 h-14 rounded-full bg-white text-[#14532D] flex items-center justify-center shadow-sm">
+                    <MessageSquare className="w-7 h-7" />
+                  </div>
+                  <p className="font-extrabold text-base text-slate-800">
+                    KrishiMart Messenger Web
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
+                    Select a Farmer or Buyer conversation from the left panel to view messages and
+                    reply in real time.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* FACEBOOK MESSENGER / WHATSAPP DELETE MODAL (ADMIN SIDE) */}
+      {/* STRICT PERMISSION: Admin can ONLY "Unsend for Everyone" messages sent by Admin! */}
+      {adminChatActionMsg && (() => {
+        const isSentByAdmin = Boolean(
+          adminChatActionMsg.is_from_admin || adminChatActionMsg.is_admin_reply
+        );
+        const canUnsendForEveryone =
+          isSentByAdmin &&
+          !adminChatActionMsg.is_unsent &&
+          adminChatActionMsg.message !== "🚫 This message was unsent";
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <h4 className="font-extrabold text-sm text-slate-900">
+                  {canUnsendForEveryone
+                    ? "Who do you want to remove this message for?"
+                    : "Remove message from your inbox?"}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setAdminChatActionMsg(null)}
+                  className="p-1 rounded-full hover:bg-slate-100 text-slate-400 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 italic line-clamp-2">
+                "{adminChatActionMsg.message}"
+              </div>
+
+              <div className="space-y-2">
+                {/* ONLY shown if Admin sent this message themselves */}
+                {canUnsendForEveryone && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSingleMessage(adminChatActionMsg.id, "everyone")}
+                    className="w-full p-3 rounded-2xl bg-red-50 hover:bg-red-100 border border-red-200 text-left flex items-start gap-3 transition cursor-pointer"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+                      <Trash2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-extrabold text-xs text-red-900">
+                        Unsend for Everyone
+                      </p>
+                      <p className="text-[11px] text-red-700 leading-snug">
+                        Unsends your Admin reply for both you and{" "}
+                        {selectedUser?.full_name || "the user"}.
+                      </p>
+                    </div>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteSingleMessage(adminChatActionMsg.id, "me")}
+                  className="w-full p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-left flex items-start gap-3 transition cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-slate-700 text-white flex items-center justify-center shrink-0 mt-0.5">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-extrabold text-xs text-slate-900">
+                      Delete for Me
+                    </p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Removes this message from your Admin inbox only.
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAdminChatActionMsg(null)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* COMPLETE "BUY FROM FARMER" PROCUREMENT MODAL */}
       {buyModal && (

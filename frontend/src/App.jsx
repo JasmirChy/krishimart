@@ -289,6 +289,7 @@ export default function App() {
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [chatInput, setChatInput] = useState("");
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
+  const [chatActionMsg, setChatActionMsg] = useState(null); // Message selected for "Delete for Me" / "Delete for Everyone" 
   const chatTabScrollRef = useRef(null);
   const chatDrawerScrollRef = useRef(null);
 
@@ -802,12 +803,36 @@ export default function App() {
     }
   };
 
-  const handleDeleteMyMessage = async (msgId) => {
+  const handleDeleteMyMessage = async (msgId, mode = "everyone") => {
     try {
-      await api.delete(`/chat/messages/${msgId}/`);
-      setMessages((prev) => prev.filter((m) => m.id !== msgId));
+      await api.delete(`/chat/messages/${msgId}/?mode=${mode}`);
+      if (mode === "me") {
+        setMessages((prev) => prev.filter((m) => m.id !== msgId));
+        showToast("Message removed for you.");
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? { ...m, message: "🚫 This message was unsent", is_unsent: true }
+              : m
+          )
+        );
+        showToast("Message unsent for everyone.");
+      }
+      setChatActionMsg(null);
     } catch {
-      showToast("You can only delete your own sent messages.", "error");
+      showToast("Could not delete message.", "error");
+    }
+  };
+
+  const handleClearUserChatForMe = async () => {
+    if (messages.length === 0) return;
+    try {
+      await api.delete(`/chat/messages/clear_thread/?mode=me`);
+      setMessages([]);
+      showToast("Chat history cleared from your view.");
+    } catch {
+      showToast("Could not clear chat.", "error");
     }
   };
 
@@ -2186,68 +2211,244 @@ export default function App() {
           );
         })()}
 
-        {/* DEDICATED CHAT VIEW */}
+        {/* DEDICATED WHATSAPP / MESSENGER-STYLE SUPPORT CHAT VIEW */}
         {activeTab === "chat" && user && (
-          <div className="max-w-3xl mx-auto px-3 sm:px-4 py-6 sm:py-10">
-            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[500px] sm:h-[540px] min-h-0">
-              <div className="p-4 sm:p-5 bg-[#14532D] text-white shrink-0">
-                <h3 className="font-bold text-base sm:text-lg">
-                  Direct Support Chat with KrishiMart Admin
-                </h3>
-                <p className="text-xs text-emerald-200">
-                  Connected as {user.full_name} ({user.role})
-                </p>
-              </div>
-              <div
-                ref={chatTabScrollRef}
-                className="flex-1 min-h-0 p-4 sm:p-5 overflow-y-auto space-y-3 bg-[#F6F8F5]"
-              >
-                {messages.length === 0 ? (
-                  <div className="text-center text-slate-400 text-xs sm:text-sm mt-16">
-                    Send a message below to chat with the Admin about buying or selling products!
-                  </div>
-                ) : (
-                  messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex ${m.is_from_admin ? "justify-start" : "justify-end"}`}
-                    >
-                      <div
-                        className={`max-w-[80%] sm:max-w-md px-4 py-2.5 rounded-2xl text-xs sm:text-sm ${
-                          m.is_from_admin
-                            ? "bg-white border border-slate-200 text-slate-900 rounded-bl-none"
-                            : "bg-[#14532D] text-white rounded-br-none"
-                        }`}
-                      >
-                        <p className="break-words">{m.message}</p>
-                        <span className="block text-[10px] opacity-70 mt-1">
-                          {m.is_from_admin ? "KrishiMart Admin" : "You"} •{" "}
-                          {new Date(m.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
+          <div className="max-w-4xl mx-auto px-2 sm:px-6 py-2 sm:py-6">
+            <div className="bg-white rounded-2xl sm:rounded-3xl shadow-xl border border-slate-200/90 overflow-hidden flex flex-col h-[calc(100vh-145px)] sm:h-[640px] min-h-[440px]">
+              {/* Messenger Top Header */}
+              <div className="px-3.5 sm:px-6 py-3 sm:py-3.5 bg-gradient-to-r from-[#0F3822] via-[#14532D] to-[#1B4332] text-white flex items-center justify-between gap-2 shrink-0 shadow-xs">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("home")}
+                    className="md:hidden p-1.5 -ml-1 rounded-full hover:bg-white/15 text-emerald-100 cursor-pointer shrink-0"
+                    title="Back to Home"
+                  >
+                    ←
+                  </button>
+                  <div className="relative shrink-0">
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/15 border-2 border-amber-400/80 flex items-center justify-center text-base sm:text-lg shadow-inner">
+                      🌱
                     </div>
-                  ))
+                    <span className="w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#14532D] absolute bottom-0 right-0" />
+                  </div>
+                  <div className="truncate">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-extrabold text-xs sm:text-base leading-tight truncate">
+                        KrishiMart Official Hub
+                      </h3>
+                      <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-300/30 text-amber-300 text-[10px] font-black">
+                        Verified Support
+                      </span>
+                    </div>
+                    <p className="text-[10px] sm:text-[11px] text-emerald-200 flex items-center gap-1.5 mt-0.5 truncate">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                      <span className="truncate">Online • Direct Messenger ({user.full_name})</span>
+                    </p>
+                  </div>
+                </div>
+
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearUserChatForMe}
+                    className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-emerald-100 text-[11px] sm:text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                    title="Clear conversation from your screen"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Clear for Me</span>
+                  </button>
                 )}
               </div>
+
+              {/* WhatsApp / Messenger Conversation Stream */}
+              <div
+                ref={chatTabScrollRef}
+                className="flex-1 min-h-0 p-3 sm:p-5 overflow-y-auto space-y-2.5 bg-[#EFEAE2]"
+              >
+                <div className="text-center pb-1">
+                  <span className="inline-block px-3 py-1 rounded-xl bg-[#FFF8C5] border border-amber-200/80 text-[10px] font-bold text-slate-700 shadow-2xs">
+                    🔒 Messages are end-to-end verified with KrishiMart Support Hub
+                  </span>
+                </div>
+
+                {messages.length === 0 ? (
+                  <div className="bg-white/95 rounded-3xl p-6 sm:p-8 text-center max-w-md mx-auto my-6 border border-slate-200/80 shadow-xs space-y-2.5">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#14532D] flex items-center justify-center mx-auto">
+                      <MessageCircle className="w-6 h-6" />
+                    </div>
+                    <p className="font-extrabold text-sm text-slate-800">
+                      Namaste {user.full_name}! 👋
+                    </p>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Send a message or tap a quick topic below to chat directly with our Admin team
+                      about orders, wholesale rates, or delivery.
+                    </p>
+                  </div>
+                ) : (
+                  messages.map((m, idx) => {
+                    const isUnsent =
+                      Boolean(m.is_unsent) || m.message === "🚫 This message was unsent";
+                    const fromAdmin = Boolean(m.is_from_admin || m.is_admin_reply);
+                    const isSentByMe = !fromAdmin;
+                    const msgDateStr = new Date(m.created_at).toLocaleDateString([], {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    });
+                    const prevDateStr =
+                      idx > 0
+                        ? new Date(messages[idx - 1].created_at).toLocaleDateString([], {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })
+                        : null;
+                    const showDateChip = idx === 0 || msgDateStr !== prevDateStr;
+                    const displayText = isUnsent
+                      ? isSentByMe
+                        ? "🚫 You unsent a message"
+                        : "🚫 KrishiMart Admin unsent a message"
+                      : m.message;
+
+                    return (
+                      <React.Fragment key={m.id}>
+                        {showDateChip && (
+                          <div className="flex justify-center my-2">
+                            <span className="px-3 py-0.5 rounded-full bg-white/90 text-slate-600 text-[10px] font-extrabold shadow-2xs border border-slate-200/60">
+                              {msgDateStr}
+                            </span>
+                          </div>
+                        )}
+                        <div
+                          className={`flex items-end gap-2 group ${
+                            fromAdmin ? "justify-start" : "justify-end"
+                          }`}
+                        >
+                          {/* Admin Avatar on Left */}
+                          {fromAdmin && (
+                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#14532D] text-amber-300 font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+                              🌱
+                            </div>
+                          )}
+
+                          {/* Delete / Unsend Action Button on Left of User's Outgoing Bubble */}
+                          {isSentByMe && (
+                            <button
+                              type="button"
+                              onClick={() => setChatActionMsg(m)}
+                              className="opacity-85 sm:opacity-0 group-hover:opacity-100 p-1.5 rounded-full bg-white/90 hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-1 shrink-0"
+                              title="Unsend or Delete Options"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* WhatsApp / Messenger Bubble */}
+                          <div
+                            className={`max-w-[78%] sm:max-w-md px-3.5 py-2 rounded-2xl text-xs sm:text-sm shadow-xs transition ${
+                              isUnsent
+                                ? "bg-white/80 border border-dashed border-slate-300 text-slate-400 italic"
+                                : fromAdmin
+                                ? "bg-white text-slate-900 rounded-bl-xs border border-slate-100"
+                                : "bg-[#14532D] text-white rounded-br-xs"
+                            }`}
+                          >
+                            {fromAdmin && !isUnsent && (
+                              <p className="text-[10px] font-extrabold text-emerald-700 mb-0.5">
+                                KrishiMart Admin
+                              </p>
+                            )}
+                            <p className="break-words leading-relaxed">{displayText}</p>
+                            <div
+                              className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${
+                                isUnsent
+                                  ? "text-slate-400"
+                                  : fromAdmin
+                                  ? "text-slate-400"
+                                  : "text-emerald-200"
+                              }`}
+                            >
+                              <span>
+                                {new Date(m.created_at).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                              {isSentByMe && !isUnsent && (
+                                <span
+                                  className={`font-black ${
+                                    m.is_read ? "text-amber-300" : "text-emerald-200"
+                                  }`}
+                                >
+                                  {m.is_read ? "✓✓ Seen" : "✓ Sent"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Delete for Me Button on Right of Admin's Incoming Bubble */}
+                          {fromAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => setChatActionMsg(m)}
+                              className="opacity-85 sm:opacity-0 group-hover:opacity-100 p-1.5 rounded-full bg-white/90 hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-1 shrink-0"
+                              title="Delete for Me"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Messenger Quick-Reply Suggestion Chips */}
+              <div className="px-3 py-2 bg-white border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+                {(isFarmer
+                  ? [
+                      "🌾 I submitted a new harvest batch",
+                      "💳 When will my farmer payout be settled?",
+                      "🚚 Ready for farm pickup today",
+                    ]
+                  : [
+                      "📦 What is my order delivery status?",
+                      "💰 Can I get a discount on my order?",
+                      "🥬 Are today's vegetables fresh?",
+                    ]
+                ).map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setChatInput(chip)}
+                    className="px-3 py-1 rounded-full bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-slate-700 hover:text-[#14532D] text-[11px] font-bold whitespace-nowrap transition cursor-pointer shrink-0"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+
+              {/* Messenger Input Composer */}
               <form
                 onSubmit={handleSendUserMessage}
-                className="p-3 sm:p-4 border-t border-slate-200 bg-white flex gap-2 shrink-0"
+                className="p-2.5 sm:p-3.5 border-t border-slate-200 bg-[#F0F2F5] flex items-center gap-2 shrink-0"
               >
                 <input
                   type="text"
-                  placeholder="Write a message to Admin..."
+                  placeholder="Type a message..."
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm outline-none"
+                  className="flex-1 px-4 py-2.5 rounded-full bg-white border border-slate-200 focus:border-[#14532D] text-xs sm:text-sm outline-none transition shadow-2xs"
                 />
                 <button
                   type="submit"
-                  className="px-4 sm:px-5 py-2.5 bg-[#14532D] text-white font-semibold rounded-xl text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                  disabled={!chatInput.trim()}
+                  className="px-4 sm:px-5 py-2.5 bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white font-extrabold rounded-full text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition cursor-pointer shrink-0"
                 >
-                  <Send className="w-4 h-4" /> Send
+                  <Send className="w-4 h-4" />
+                  <span className="hidden sm:inline">Send</span>
                 </button>
               </form>
             </div>
@@ -4344,88 +4545,261 @@ export default function App() {
         </div>
       )}
 
-      {/* MOBILE-RESPONSIVE FLOATING LIVE CHAT DRAWER */}
+      {/* MOBILE-RESPONSIVE FLOATING WHATSAPP / MESSENGER LIVE CHAT DRAWER */}
       {chatDrawerOpen && isVerifiedOrAdmin && (
-        <div className="fixed inset-x-3 bottom-20 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:w-96 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[420px] sm:h-[460px] min-h-0">
-          <div className="p-4 bg-[#14532D] text-white flex items-center justify-between shrink-0">
-            <div>
-              <p className="font-bold text-sm">KrishiMart Live Admin Support</p>
-              <p className="text-[11px] text-emerald-200">Buyers & Farmers Direct Chat</p>
+        <div className="fixed inset-x-2 bottom-16 sm:inset-x-auto sm:bottom-5 sm:right-5 z-50 sm:w-[400px] bg-white rounded-3xl shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col h-[72vh] max-h-[520px] min-h-[360px]">
+          {/* Messenger Drawer Header */}
+          <div className="px-4 py-3 bg-gradient-to-r from-[#0F3822] via-[#14532D] to-[#1B4332] text-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="relative shrink-0">
+                <div className="w-9 h-9 rounded-full bg-white/15 border border-amber-400/70 flex items-center justify-center text-sm">
+                  🌱
+                </div>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#14532D] absolute bottom-0 right-0" />
+              </div>
+              <div className="truncate">
+                <p className="font-extrabold text-xs sm:text-sm leading-tight truncate">
+                  KrishiMart Admin Messenger
+                </p>
+                <p className="text-[10px] text-emerald-200">
+                  ● Online • Direct Support
+                </p>
+              </div>
             </div>
-            <button
-              onClick={() => setChatDrawerOpen(false)}
-              className="p-1 text-emerald-200 hover:text-white cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              {messages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearUserChatForMe}
+                  className="p-1.5 rounded-lg hover:bg-white/15 text-emerald-200 hover:text-white transition cursor-pointer"
+                  title="Clear chat for me"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setChatDrawerOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-emerald-200 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
+
+          {/* Messenger Drawer Feed */}
           <div
             ref={chatDrawerScrollRef}
-            className="flex-1 min-h-0 p-4 overflow-y-auto space-y-2.5 bg-[#F6F8F5]"
+            className="flex-1 min-h-0 p-3 overflow-y-auto space-y-2 bg-[#EFEAE2]"
           >
             {messages.length === 0 ? (
-              <p className="text-center text-xs text-slate-400 mt-12">
-                Hello {user.full_name}! Message the Admin about product prices or selling your
-                vegetables.
-              </p>
+              <div className="bg-white/95 rounded-2xl p-5 text-center mt-8 border border-slate-200/80 space-y-1.5 shadow-2xs">
+                <p className="font-extrabold text-xs text-slate-800">
+                  Namaste {user.full_name}! 👋
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Message the Admin about produce prices, discounts, or selling your harvest.
+                </p>
+              </div>
             ) : (
-              messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex ${m.is_from_admin ? "justify-start" : "justify-end"}`}
-                >
+              messages.map((m) => {
+                const isUnsent =
+                  Boolean(m.is_unsent) || m.message === "🚫 This message was unsent";
+                const fromAdmin = Boolean(m.is_from_admin || m.is_admin_reply);
+                const isSentByMe = !fromAdmin;
+                const displayText = isUnsent
+                  ? isSentByMe
+                    ? "🚫 You unsent a message"
+                    : "🚫 KrishiMart Admin unsent a message"
+                  : m.message;
+
+                return (
                   <div
-                    className={`max-w-[78%] px-3.5 py-2 rounded-2xl text-xs ${
-                      m.is_from_admin
-                        ? "bg-white border border-slate-200 text-slate-800"
-                        : "bg-[#14532D] text-white"
+                    key={m.id}
+                    className={`flex items-end gap-1.5 group ${
+                      fromAdmin ? "justify-start" : "justify-end"
                     }`}
                   >
-                    <p className="break-words">{m.message}</p>
-                    <span className="flex items-center justify-between gap-2 text-[10px] opacity-75 mt-1">
-                          <span>
-                            {m.is_from_admin ? "KrishiMart Admin" : "You"} •{" "}
-                            {new Date(m.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          {!m.is_from_admin && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteMyMessage(m.id)}
-                              className="hover:text-red-300 cursor-pointer"
-                              title="Unsend message"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
+                    {fromAdmin && (
+                      <div className="w-6 h-6 rounded-full bg-[#14532D] text-amber-300 text-[10px] font-bold flex items-center justify-center shrink-0">
+                        🌱
+                      </div>
+                    )}
+
+                    {isSentByMe && (
+                      <button
+                        type="button"
+                        onClick={() => setChatActionMsg(m)}
+                        className="p-1 rounded-full bg-white/90 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-0.5 shrink-0"
+                        title="Unsend or Delete Options"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+
+                    <div
+                      className={`max-w-[76%] px-3.5 py-2 rounded-2xl text-xs shadow-2xs ${
+                        isUnsent
+                          ? "bg-white/80 border border-dashed border-slate-300 text-slate-400 italic"
+                          : fromAdmin
+                          ? "bg-white border border-slate-100 text-slate-900 rounded-bl-xs"
+                          : "bg-[#14532D] text-white rounded-br-xs"
+                      }`}
+                    >
+                      <p className="break-words leading-relaxed">{displayText}</p>
+                      <div
+                        className={`flex items-center justify-end gap-1 text-[9px] mt-1 ${
+                          isUnsent || fromAdmin ? "text-slate-400" : "text-emerald-200"
+                        }`}
+                      >
+                        <span>
+                          {new Date(m.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </span>
+                        {isSentByMe && !isUnsent && (
+                          <span className="font-bold">{m.is_read ? "✓✓" : "✓"}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {fromAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setChatActionMsg(m)}
+                        className="p-1 rounded-full bg-white/90 hover:bg-red-50 text-slate-400 hover:text-red-600 border border-slate-200 shadow-2xs transition cursor-pointer mb-0.5 shrink-0"
+                        title="Delete for Me"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
+
+          {/* Quick-Reply Pills inside Drawer */}
+          <div className="px-2.5 py-1.5 bg-white border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+            {["📦 Order Status", "💰 Discount Request", "🌾 Sell Harvest"].map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => setChatInput(chip)}
+                className="px-2.5 py-0.5 rounded-full bg-slate-100 hover:bg-emerald-50 border border-slate-200 text-slate-700 text-[10px] font-bold whitespace-nowrap cursor-pointer shrink-0"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+
           <form
             onSubmit={handleSendUserMessage}
-            className="p-3 border-t border-slate-200 bg-white flex gap-2 shrink-0"
+            className="p-2.5 border-t border-slate-200 bg-[#F0F2F5] flex items-center gap-2 shrink-0"
           >
             <input
               type="text"
-              placeholder="Message Admin..."
+              placeholder="Type a message..."
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none"
+              className="flex-1 px-3.5 py-2 rounded-full bg-white border border-slate-200 focus:border-[#14532D] text-xs outline-none"
             />
             <button
               type="submit"
-              className="px-3.5 py-2 bg-[#14532D] text-white rounded-xl text-xs font-bold cursor-pointer"
+              disabled={!chatInput.trim()}
+              className="w-8 h-8 bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white rounded-full flex items-center justify-center cursor-pointer shrink-0"
             >
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
         </div>
       )}
+
+      {/* FACEBOOK MESSENGER-STYLE MESSAGE DELETE / UNSEND MODAL (USER SIDE) */}
+      {/* STRICT PERMISSION: Customer/Farmer can ONLY "Unsend for Everyone" their OWN sent messages! */}
+      {chatActionMsg && (() => {
+        const isFromAdmin = Boolean(chatActionMsg.is_from_admin || chatActionMsg.is_admin_reply);
+        const isMyOwnSentMessage = !isFromAdmin;
+        const canUnsendForEveryone =
+          isMyOwnSentMessage &&
+          !chatActionMsg.is_unsent &&
+          chatActionMsg.message !== "🚫 This message was unsent";
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <h4 className="font-extrabold text-sm text-slate-900">
+                  {canUnsendForEveryone
+                    ? "Who do you want to remove this message for?"
+                    : "Remove message from your chat?"}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setChatActionMsg(null)}
+                  className="p-1 rounded-full hover:bg-slate-100 text-slate-400 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 italic line-clamp-2">
+                "{chatActionMsg.message}"
+              </div>
+
+              <div className="space-y-2">
+                {/* ONLY shown if the User sent this message themselves */}
+                {canUnsendForEveryone && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteMyMessage(chatActionMsg.id, "everyone")}
+                    className="w-full p-3 rounded-2xl bg-red-50 hover:bg-red-100 border border-red-200 text-left flex items-start gap-3 transition cursor-pointer"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+                      <Trash2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-extrabold text-xs text-red-900">
+                        Unsend for Everyone
+                      </p>
+                      <p className="text-[11px] text-red-700 leading-snug">
+                        Unsends your message for both you and KrishiMart Admin.
+                      </p>
+                    </div>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteMyMessage(chatActionMsg.id, "me")}
+                  className="w-full p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-left flex items-start gap-3 transition cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-slate-700 text-white flex items-center justify-center shrink-0 mt-0.5">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-extrabold text-xs text-slate-900">
+                      Delete for Me
+                    </p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Removes this message from your chat screen only.
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setChatActionMsg(null)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 1/4 A4 PRINTABLE & DOWNLOADABLE SLIP MODAL (FARMER VOUCHER & CUSTOMER RECEIPT) */}
       {activeSlip && (
