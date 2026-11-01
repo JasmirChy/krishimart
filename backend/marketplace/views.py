@@ -41,10 +41,15 @@ def _load_discount_cache():
                 data = json.load(f)
                 discounts = {int(k): Decimal(str(v)) for k, v in data.get("discounts", {}).items()}
                 sent = {int(x) for x in data.get("sent_orders", [])}
-                return discounts, sent
+                actual_prices = {
+                    int(k): Decimal(str(v))
+                    for k, v in data.get("product_actual_prices", {}).items()
+                    if str(v).strip()
+                }
+                return discounts, sent, actual_prices
     except Exception:
         pass
-    return {}, set()
+    return {}, set(), {}
 
 
 def _save_discount_cache():
@@ -52,6 +57,7 @@ def _save_discount_cache():
         data = {
             "discounts": {str(k): str(v) for k, v in ORDER_DISCOUNTS.items()},
             "sent_orders": list(CONFIRMED_EMAIL_SENT_ORDERS),
+            "product_actual_prices": {str(k): str(v) for k, v in PRODUCT_ACTUAL_PRICES.items()},
         }
         with open(DISCOUNT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -59,8 +65,8 @@ def _save_discount_cache():
         pass
 
 
-# Tracks applied discount percentage per order ID (persisted across server restarts)
-ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS = _load_discount_cache()
+# Tracks applied discount % per order ID and Admin's Actual (Original) Price per Product ID
+ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS, PRODUCT_ACTUAL_PRICES = _load_discount_cache()
 
 
 def send_krishimart_email_async(to_email, subject, html_message, plain_message):
@@ -516,8 +522,60 @@ class ProductViewSet(viewsets.ModelViewSet):
         Product.objects.filter(is_available=False).update(is_available=True)
         return Product.objects.all()
 
+    def _save_product_actual_price(self, product_obj):
+        if "actual_price" in self.request.data:
+            raw_actual = str(self.request.data.get("actual_price") or "").strip()
+            if raw_actual:
+                try:
+                    val = Decimal(raw_actual).quantize(Decimal("0.01"))
+                    if val > Decimal("0"):
+                        PRODUCT_ACTUAL_PRICES[product_obj.id] = val
+                    else:
+                        PRODUCT_ACTUAL_PRICES.pop(product_obj.id, None)
+                    _save_discount_cache()
+                except Exception:
+                    pass
+            else:
+                PRODUCT_ACTUAL_PRICES.pop(product_obj.id, None)
+                _save_discount_cache()
+
+    def _enrich_product_data(self, product_obj, data_dict):
+        enriched = dict(data_dict)
+        selling_price = Decimal(str(getattr(product_obj, "price", 0) or 0)).quantize(Decimal("0.01"))
+        actual_price = PRODUCT_ACTUAL_PRICES.get(product_obj.id)
+        if actual_price and actual_price > selling_price:
+            disc_pct = int(round(((actual_price - selling_price) / actual_price) * Decimal("100")))
+            enriched["actual_price"] = str(actual_price)
+            enriched["discount_pct"] = max(1, disc_pct)
+        else:
+            enriched["actual_price"] = None
+            enriched["discount_pct"] = 0
+        return enriched
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        products_by_id = {p.id: p for p in queryset}
+        enriched_list = [
+            self._enrich_product_data(products_by_id[item["id"]], item)
+            if item.get("id") in products_by_id
+            else item
+            for item in serializer.data
+        ]
+        return Response(enriched_list)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(self._enrich_product_data(instance, serializer.data))
+
     def perform_create(self, serializer):
-        serializer.save(is_available=True)
+        product_obj = serializer.save(is_available=True)
+        self._save_product_actual_price(product_obj)
+
+    def perform_update(self, serializer):
+        product_obj = serializer.save()
+        self._save_product_actual_price(product_obj)
 
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
@@ -604,7 +662,7 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
                 else agreed_rate
             )
 
-            Product.objects.create(
+            created_prod = Product.objects.create(
                 name=submission.vegetable_name,
                 category=mapped_cat,
                 description=f"{submission.vegetable_description} (Grown by: {submission.seller.full_name})",
@@ -617,6 +675,15 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
                 image=submission.image,
                 is_available=True,
             )
+            raw_actual_price = str(request.data.get("actual_price") or "").strip()
+            if raw_actual_price:
+                try:
+                    act_val = Decimal(raw_actual_price).quantize(Decimal("0.01"))
+                    if act_val > final_retail_price:
+                        PRODUCT_ACTUAL_PRICES[created_prod.id] = act_val
+                        _save_discount_cache()
+                except Exception:
+                    pass
 
         # Send automated procurement voucher email to the farmer
         send_farmer_procurement_email(purchase, is_settlement_update=False)

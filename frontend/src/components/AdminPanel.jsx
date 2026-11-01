@@ -54,6 +54,7 @@ export default function AdminPanel() {
     admin_notes: "",
     publish_to_store: true,
     retail_price: "",
+    actual_price: "",
   });
 
   // Decline Modal State
@@ -95,6 +96,7 @@ export default function AdminPanel() {
   const [newProduct, setNewProduct] = useState({
     name: "",
     category: "VEGETABLES",
+    actual_price: "",
     price: "",
     unit: "kg",
     stock_quantity: "",
@@ -208,6 +210,7 @@ export default function AdminPanel() {
       admin_notes: `Harvest pickup from ${sub.pickup_location}. Quality verified.`,
       publish_to_store: true,
       retail_price: (Number(sub.expected_price_per_unit) * 1.2).toFixed(2),
+      actual_price: (Number(sub.expected_price_per_unit) * 1.35).toFixed(2),
     });
   };
 
@@ -330,6 +333,7 @@ const handleAddProduct = async (e) => {
       setNewProduct({
         name: "",
         category: "VEGETABLES",
+        actual_price: "",
         price: "",
         unit: "kg",
         stock_quantity: "",
@@ -351,6 +355,7 @@ const handleAddProduct = async (e) => {
       await api.patch(`/marketplace/products/${editingProduct.id}/`, {
         name: editingProduct.name,
         category: editingProduct.category,
+        actual_price: editingProduct.actual_price || "",
         price: editingProduct.price,
         unit: editingProduct.unit,
         stock_quantity: editingProduct.stock_quantity,
@@ -1735,18 +1740,57 @@ const handleOrderStatus = async (orderId, status) => {
               </select>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु) *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Actual Price / Original (रु)
+                </label>
                 <input
                   type="number"
-                  required
-                  placeholder="e.g. 65"
-                  value={newProduct.price}
-                  onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                  step="0.01"
+                  placeholder="Before discount (e.g. 500)"
+                  value={newProduct.actual_price || ""}
+                  onChange={(e) => setNewProduct({ ...newProduct, actual_price: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-slate-50"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-bold text-[#14532D] mb-1">
+                  Selling Price / MRP (रु) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  placeholder="Customer price (e.g. 450)"
+                  value={newProduct.price}
+                  onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 text-sm font-bold"
+                />
+              </div>
+            </div>
+            {Number(newProduct.actual_price) > Number(newProduct.price) &&
+              Number(newProduct.price) > 0 && (
+                <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#14532D] flex items-center justify-between">
+                  <span>
+                    Customer sees: रु {newProduct.price}{" "}
+                    <span className="line-through text-slate-400 ml-1">
+                      रु {newProduct.actual_price}
+                    </span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                    SAVE{" "}
+                    {Math.round(
+                      ((Number(newProduct.actual_price) - Number(newProduct.price)) /
+                        Number(newProduct.actual_price)) *
+                        100
+                    )}
+                    %
+                  </span>
+                </div>
+              )}
+
+            <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Stock Qty *</label>
                 <input
@@ -2299,19 +2343,37 @@ const handleOrderStatus = async (orderId, status) => {
               </label>
 
               {procureForm.publish_to_store && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Customer Retail Selling Price (रु/{buyModal.unit})
-                  </label>
-                  <input
-                    type="number"
-                    value={procureForm.retail_price}
-                    onChange={(e) =>
-                      setProcureForm({ ...procureForm, retail_price: e.target.value })
-                    }
-                    className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-sm"
-                    placeholder="Enter retail price"
-                  />
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Actual / Original Price (रु/{buyModal.unit})
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={procureForm.actual_price || ""}
+                      onChange={(e) =>
+                        setProcureForm({ ...procureForm, actual_price: e.target.value })
+                      }
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white"
+                      placeholder="Original price"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#14532D] mb-1">
+                      Selling Price / MRP (रु/{buyModal.unit}) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={procureForm.retail_price}
+                      onChange={(e) =>
+                        setProcureForm({ ...procureForm, retail_price: e.target.value })
+                      }
+                      className="w-full px-3 py-2 border border-emerald-300 rounded-xl text-sm font-bold bg-white"
+                      placeholder="Selling price"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -2451,19 +2513,60 @@ const handleOrderStatus = async (orderId, status) => {
               </select>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Price (रु) *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Actual / Original Price (रु)
+                </label>
                 <input
                   type="number"
+                  step="0.01"
+                  placeholder="Optional (before discount)"
+                  value={editingProduct.actual_price || ""}
+                  onChange={(e) =>
+                    setEditingProduct({ ...editingProduct, actual_price: e.target.value })
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[#14532D] mb-1">
+                  Selling Price / MRP (रु) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
                   required
                   value={editingProduct.price}
                   onChange={(e) =>
                     setEditingProduct({ ...editingProduct, price: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                  className="w-full px-3 py-2 rounded-xl border border-emerald-300 text-sm font-bold"
                 />
               </div>
+            </div>
+            {Number(editingProduct.actual_price) > Number(editingProduct.price) &&
+              Number(editingProduct.price) > 0 && (
+                <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#14532D] flex items-center justify-between">
+                  <span>
+                    Customer sees: रु {editingProduct.price}{" "}
+                    <span className="line-through text-slate-400 ml-1">
+                      रु {editingProduct.actual_price}
+                    </span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">
+                    SAVE{" "}
+                    {Math.round(
+                      ((Number(editingProduct.actual_price) - Number(editingProduct.price)) /
+                        Number(editingProduct.actual_price)) *
+                        100
+                    )}
+                    %
+                  </span>
+                </div>
+              )}
+
+            <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Stock Qty *</label>
                 <input

@@ -202,9 +202,21 @@ export default function App() {
   // Farmer's Sales to Admin Ledger
   const [farmerSales, setFarmerSales] = useState([]);
 
-  // Product Quick-View Modal
+  // Full-Page Daraz-Style Product Detail View State
   const [quickViewProduct, setQuickViewProduct] = useState(null);
   const [quickViewQty, setQuickViewQty] = useState(1);
+  const [detailTab, setDetailTab] = useState("specs"); // "specs" | "reviews" | "delivery"
+
+  // Scroll to top smoothly whenever a user opens a Product Detail Page, and close it on tab change
+  useEffect(() => {
+    if (quickViewProduct) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [quickViewProduct]);
+
+  useEffect(() => {
+    setQuickViewProduct(null);
+  }, [activeTab]);
 
   // Persistent Basket Drawer & Payment Method
   const [basket, setBasket] = useState(() => {
@@ -702,7 +714,7 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 shadow-xs">
         <div className="max-w-7xl mx-auto px-3 sm:px-8 py-2.5 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4">
           <div
-            onClick={() => setActiveTab("home")}
+            onClick={() => { setQuickViewProduct(null); setActiveTab("home"); }}
             className="flex items-center gap-2 cursor-pointer shrink-0"
           >
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#14532D] flex items-center justify-center text-amber-400 shadow-sm">
@@ -911,7 +923,7 @@ export default function App() {
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => { setQuickViewProduct(null); setActiveTab(item.id); }}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
                     activeTab === item.id
                       ? "bg-[#14532D] text-white"
@@ -1419,7 +1431,7 @@ export default function App() {
                 </h2>
               </div>
               <button
-                onClick={() => setActiveTab("marketplace")}
+                onClick={() => { setQuickViewProduct(null); setActiveTab("marketplace"); }}
                 className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
               >
                 + Continue Shopping
@@ -1760,8 +1772,696 @@ export default function App() {
           </div>
         )}
 
+        {/* FULL-PAGE DARAZ-STYLE PRODUCT DETAIL VIEW (DESKTOP & MOBILE) */}
+        {quickViewProduct && activeTab !== "admin" && (() => {
+          const p = quickViewProduct;
+          const imgUrl = getProductImage(p);
+          const stockNum = Number(p.stock_quantity || 0);
+          const isLowStock = stockNum > 0 && stockNum <= 35;
+          const unitPrice = Number(p.price || 0);
+          const actualOriginalPrice = Number(p.actual_price || 0);
+          const hasAdminDiscount = actualOriginalPrice > unitPrice;
+          const savingsPct = hasAdminDiscount
+            ? Math.max(1, Math.round(((actualOriginalPrice - unitPrice) / actualOriginalPrice) * 100))
+            : 0;
+
+          // Calculate live dynamic rating from approvedBuyerReviews
+          const productMatchingReviews = approvedBuyerReviews.filter(
+            (r) =>
+              (r.title && r.title.toLowerCase().includes((p.name || "").toLowerCase())) ||
+              (r.content && r.content.toLowerCase().includes((p.name || "").toLowerCase()))
+          );
+          const reviewsForRating =
+            productMatchingReviews.length > 0 ? productMatchingReviews : approvedBuyerReviews;
+          const avgRating =
+            reviewsForRating.length > 0
+              ? (
+                  reviewsForRating.reduce((sum, r) => sum + Number(r.rating || 5), 0) /
+                  reviewsForRating.length
+                ).toFixed(1)
+              : "5.0";
+          const basketItem = basket.find((item) => item.id === p.id);
+          const qtyInBasket = basketItem ? basketItem.qty : 0;
+
+          // Extract grower name if present in description like "(Grown by: Name)"
+          const growerMatch = (p.description || "").match(/\(Grown by:\s*([^)]+)\)/i);
+          const growerName = growerMatch ? growerMatch[1].trim() : "KrishiMart Verified Cooperative";
+          const cleanDescription = (p.description || "").replace(/\s*\(Grown by:[^)]+\)/i, "").trim();
+
+          const relatedProducts = (Array.isArray(dbProducts) ? dbProducts : [])
+            .filter((item) => item.id !== p.id)
+            .sort((a, b) => (a.category === p.category ? -1 : b.category === p.category ? 1 : 0))
+            .slice(0, 6);
+
+          return (
+            <div className="max-w-7xl mx-auto px-3 sm:px-8 py-4 sm:py-8 space-y-6 pb-28 md:pb-12">
+              {/* Top Breadcrumb & Back Navigation Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200/90 shadow-2xs">
+                <div className="flex items-center gap-2 text-xs text-slate-500 overflow-x-auto no-scrollbar">
+                  <button
+                    type="button"
+                    onClick={() => setQuickViewProduct(null)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-800 hover:text-[#14532D] font-extrabold text-xs flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                  >
+                    ← {tr("Back to Shop", "पछाडि जानुहोस्")}
+                  </button>
+                  <span className="text-slate-300">/</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategory(p.category || "ALL");
+                      setQuickViewProduct(null);
+                      setActiveTab("marketplace");
+                    }}
+                    className="hover:text-[#14532D] font-semibold uppercase text-[11px] cursor-pointer shrink-0"
+                  >
+                    {p.category}
+                  </button>
+                  <span className="text-slate-300">/</span>
+                  <span className="font-bold text-slate-800 truncate max-w-[160px] sm:max-w-xs">
+                    {p.name}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-[#14532D] border border-emerald-200 text-[10px] font-extrabold">
+                    Batch #KM-PRD-{p.id}
+                  </span>
+                </div>
+              </div>
+
+              {/* Main Daraz 12-Column Product Hero Container */}
+              <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs p-3.5 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+                {/* Left 5 Columns: High-Res Product Image & Trust Highlights */}
+                <div className="lg:col-span-5 space-y-3.5">
+                  <div className="relative h-72 sm:h-96 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/80 group">
+                    <img
+                      src={imgUrl}
+                      alt={p.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                    />
+                    <span className="absolute top-3 left-3 px-3 py-1 rounded-full bg-white/95 text-slate-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-700" />
+                      {p.origin_location || "Nepal Farm"}
+                    </span>
+                    <span
+                      className={`absolute top-3 right-3 px-3 py-1 rounded-full text-white text-xs font-extrabold shadow-sm ${
+                        stockNum <= 0
+                          ? "bg-red-600"
+                          : isLowStock
+                          ? "bg-amber-600"
+                          : "bg-emerald-700"
+                      }`}
+                    >
+                      {stockNum > 0
+                        ? isLowStock
+                          ? `🔥 Low Stock: ${p.stock_quantity} ${p.unit} Left`
+                          : `✓ In Stock: ${p.stock_quantity} ${p.unit}`
+                        : "Out of Stock"}
+                    </span>
+                    <div className="absolute bottom-3 inset-x-3 flex items-center justify-between gap-2">
+                      <span className="px-3 py-1 rounded-xl bg-slate-950/75 backdrop-blur-xs text-amber-300 text-[11px] font-bold">
+                        🌾 100% Direct Nepali Farm Harvest
+                      </span>
+                      {qtyInBasket > 0 && (
+                        <span className="px-3 py-1 rounded-xl bg-[#14532D] text-white text-[11px] font-extrabold shadow-sm">
+                          ✓ {qtyInBasket} {p.unit} in Basket
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3 Quick Farm-to-Kitchen Trust Badges Below Image */}
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-2.5">
+                      <p className="text-xs font-black text-[#14532D]">100% Fresh</p>
+                      <p className="text-[10px] text-slate-500">Morning Harvest</p>
+                    </div>
+                    <div className="bg-amber-50/70 border border-amber-200/70 rounded-xl p-2.5">
+                      <p className="text-xs font-black text-amber-800">0% Middlemen</p>
+                      <p className="text-[10px] text-slate-500">Direct Farm Price</p>
+                    </div>
+                    <div className="bg-blue-50/70 border border-blue-200/70 rounded-xl p-2.5">
+                      <p className="text-xs font-black text-blue-900">Lab & Hub Checked</p>
+                      <p className="text-[10px] text-slate-500">Quality Sorted</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Middle 4 Columns: Product Title, Rating, Daraz Price Card, Bulk Presets & Actions */}
+                <div className="lg:col-span-4 flex flex-col justify-between space-y-5">
+                  <div className="space-y-3.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-[#14532D] text-[11px] font-extrabold uppercase">
+                        {p.category}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDetailTab("reviews")}
+                        className="flex items-center gap-1 text-amber-500 text-xs font-bold hover:underline cursor-pointer"
+                      >
+                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                        <span className="text-slate-800 font-extrabold">{avgRating}</span>
+                        <span className="text-slate-400 font-normal">
+                          ({approvedBuyerReviews.length}{" "}
+                          {approvedBuyerReviews.length === 1 ? "Customer Review" : "Customer Reviews"})
+                        </span>
+                      </button>
+                    </div>
+
+                    <h1 className="text-xl sm:text-2xl font-black text-slate-900 leading-snug">
+                      {p.name}
+                    </h1>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                      <span>
+                        Grower: <strong className="text-emerald-800">{growerName}</strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Origin: <strong className="text-slate-800">{p.origin_location || "Nepal"}</strong>
+                      </span>
+                    </div>
+
+                    {/* Daraz-Style Highlighted Selling Price & Admin Actual Price Comparison Box */}
+                    <div className="bg-gradient-to-r from-emerald-50/90 via-emerald-50/40 to-amber-50/40 border border-emerald-200/80 rounded-2xl p-4 space-y-1.5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div>
+                          <span className="text-2xl sm:text-3xl font-black text-[#14532D]">
+                            रु {unitPrice.toFixed(2)}
+                          </span>
+                          <span className="text-xs sm:text-sm font-bold text-slate-600">
+                            {" "}
+                            / {p.unit}
+                          </span>
+                        </div>
+                        {hasAdminDiscount ? (
+                          <span className="px-2.5 py-1 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase">
+                            SAVE {savingsPct}% OFF
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-black uppercase">
+                            ✓ Direct Farm Rate
+                          </span>
+                        )}
+                      </div>
+                      {hasAdminDiscount ? (
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          <span>Actual Price:</span>
+                          <span className="line-through text-slate-400 font-semibold">
+                            रु {actualOriginalPrice.toFixed(2)} / {p.unit}
+                          </span>
+                          <span className="text-emerald-700 font-bold">
+                            • Save रु {(actualOriginalPrice - unitPrice).toFixed(2)}/{p.unit}
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-emerald-800 font-semibold">
+                          Transparent farm-to-kitchen selling price set by KrishiMart Hub
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Clean Product Summary */}
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                      {cleanDescription ||
+                        "Freshly harvested, hand-sorted quality produce sourced directly from verified Nepali farmers."}
+                    </p>
+
+                    {/* Daraz-Style Quantity Selector + Quick Weight Presets */}
+                    <div className="pt-1 space-y-2.5 border-t border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-slate-700">
+                          Select Quantity ({p.unit}):
+                        </span>
+                        <span className="text-xs font-bold text-emerald-700">
+                          Subtotal: रु {(unitPrice * quickViewQty).toFixed(2)}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center bg-slate-100 rounded-xl p-1 border border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => setQuickViewQty(Math.max(1, quickViewQty - 1))}
+                            className="w-8 h-8 rounded-lg bg-white hover:bg-slate-50 text-slate-800 font-black flex items-center justify-center shadow-2xs cursor-pointer"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="w-12 text-center font-black text-sm text-slate-900">
+                            {quickViewQty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQuickViewQty(
+                                stockNum > 0 ? Math.min(stockNum, quickViewQty + 1) : quickViewQty + 1
+                              )
+                            }
+                            className="w-8 h-8 rounded-lg bg-[#14532D] hover:bg-[#1B4332] text-white font-black flex items-center justify-center shadow-2xs cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* 1-Tap Quick Bulk Quantity Pills */}
+                        <div className="flex items-center gap-1.5">
+                          {[1, 2, 5, 10]
+                            .filter((q) => stockNum <= 0 || q <= stockNum)
+                            .map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setQuickViewQty(preset)}
+                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-extrabold border transition cursor-pointer ${
+                                  quickViewQty === preset
+                                    ? "bg-emerald-50 border-[#14532D] text-[#14532D]"
+                                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {preset} {p.unit}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Desktop & Tablet Primary CTA Buttons (Buy Now + Add to Basket) */}
+                  <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        disabled={stockNum <= 0}
+                        onClick={() => {
+                          handleAddToBasket(p, quickViewQty);
+                          setBasketDrawerOpen(true);
+                        }}
+                        className="py-3 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-slate-200 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                      >
+                        ⚡ {tr("Buy Now", "तुरुन्तै किन्नुहोस्")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={stockNum <= 0}
+                        onClick={() => handleAddToBasket(p, quickViewQty)}
+                        className="py-3 px-4 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-300 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                      >
+                        <ShoppingBag className="w-4 h-4" />
+                        {stockNum > 0
+                          ? tr("Add to Basket", "झोलामा राख्नुहोस्")
+                          : "Out of Stock"}
+                      </button>
+                    </div>
+
+                    {!isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => requireAuth(() => setChatDrawerOpen(true))}
+                        className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:border-[#14532D] text-slate-700 hover:text-[#14532D] text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4 text-emerald-700" />
+                        Ask KrishiMart Admin About Bulk Rate or Freshness
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right 3 Columns: Daraz-Style Delivery, Payment & Seller Assurance Sidebar */}
+                <div className="lg:col-span-3 bg-slate-50/90 rounded-2xl p-4 sm:p-5 border border-slate-200/80 space-y-4 h-fit">
+                  <div className="space-y-2.5 border-b border-slate-200/80 pb-3.5">
+                    <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Delivery & Dispatch
+                    </p>
+                    <div className="flex items-start gap-2.5 text-xs">
+                      <MapPin className="w-4 h-4 text-[#14532D] shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-slate-800">
+                          {user?.location || "Dhangadhi Hub & Kathmandu Valley"}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          Direct cold-chain & hub dispatch to your doorstep
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2.5 text-xs">
+                      <PackageCheck className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-slate-800">Same-Day / Next-Morning Delivery</p>
+                        <p className="text-[11px] text-slate-500">
+                          Sorted & weighed at KrishiMart Collection Hub
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5 border-b border-slate-200/80 pb-3.5">
+                    <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Payment & Receipt
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                        💵 Cash on Delivery
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-800">
+                        🟢 eSewa
+                      </span>
+                      <span className="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-200 text-[11px] font-bold text-purple-800">
+                        🟣 Khalti
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1.5 pt-0.5">
+                      <Receipt className="w-3.5 h-3.5 text-[#14532D] shrink-0" />
+                      Includes 1/4 A4 Printable & PNG Digital Receipt
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Verified Source
+                    </p>
+                    <div className="bg-white rounded-xl p-3 border border-slate-200/80 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#14532D] text-amber-300 font-black text-xs flex items-center justify-center">
+                          KM
+                        </div>
+                        <div>
+                          <p className="text-xs font-extrabold text-slate-900">{growerName}</p>
+                          <p className="text-[10px] text-emerald-700 font-bold">
+                            ✓ KrishiMart Quality Verified
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-center">
+                        <div>
+                          <p className="text-[10px] text-slate-400">Farm Rating</p>
+                          <p className="text-xs font-black text-slate-800">98% Positive</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-400">Farmer Payout</p>
+                          <p className="text-xs font-black text-[#14532D]">100% Direct</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Daraz-Style Detailed Specifications, Buyer Reviews & Delivery Tabs */}
+              <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs overflow-hidden">
+                <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar bg-slate-50/70">
+                  {[
+                    { id: "specs", label: "📋 Product Details & Farm Specs" },
+                    {
+                      id: "reviews",
+                      label: `⭐ Verified Customer Reviews (${approvedBuyerReviews.length})`,
+                    },
+                    { id: "delivery", label: "🚚 Hub Quality & Delivery Info" },
+                  ].map((tb) => (
+                    <button
+                      key={tb.id}
+                      type="button"
+                      onClick={() => setDetailTab(tb.id)}
+                      className={`px-5 py-3.5 text-xs sm:text-sm font-extrabold whitespace-nowrap border-b-2 transition cursor-pointer ${
+                        detailTab === tb.id
+                          ? "border-[#14532D] text-[#14532D] bg-white"
+                          : "border-transparent text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {tb.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="p-4 sm:p-6">
+                  {detailTab === "specs" && (
+                    <div className="grid md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                          About This Harvest Batch
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                          {p.description ||
+                            "Sourced directly from registered Nepali farmers, inspected for freshness and grading at the KrishiMart hub."}
+                        </p>
+                        <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 text-xs text-emerald-950 space-y-1">
+                          <p className="font-extrabold text-[#14532D]">
+                            🌱 Why Buy From KrishiMart Instead of Middlemen?
+                          </p>
+                          <p className="text-slate-600 leading-relaxed">
+                            Every order supports verified local growers in{" "}
+                            <strong>{p.origin_location || "Nepal"}</strong> with transparent wholesale
+                            settlements while giving your family chemical-free, farm-fresh produce.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2 text-xs">
+                        <h4 className="font-extrabold text-slate-900 mb-2">
+                          Batch Specifications
+                        </h4>
+                        <div className="flex justify-between py-1.5 border-b border-slate-200/70">
+                          <span className="text-slate-500">Batch Reference:</span>
+                          <span className="font-bold text-slate-900">#KM-PRD-{p.id}</span>
+                        </div>
+                        <div className="flex justify-between py-1.5 border-b border-slate-200/70">
+                          <span className="text-slate-500">Category:</span>
+                          <span className="font-bold text-slate-900">{p.category}</span>
+                        </div>
+                        <div className="flex justify-between py-1.5 border-b border-slate-200/70">
+                          <span className="text-slate-500">Origin Location:</span>
+                          <span className="font-bold text-slate-900">
+                            {p.origin_location || "Nepal Farm"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between py-1.5 border-b border-slate-200/70">
+                          <span className="text-slate-500">Producer / Cooperative:</span>
+                          <span className="font-bold text-emerald-800">{growerName}</span>
+                        </div>
+                        <div className="flex justify-between py-1.5 border-b border-slate-200/70">
+                          <span className="text-slate-500">Unit Price:</span>
+                          <span className="font-bold text-[#14532D]">
+                            रु {unitPrice.toFixed(2)} per {p.unit}
+                          </span>
+                        </div>
+                        <div className="flex justify-between py-1.5">
+                          <span className="text-slate-500">Available Stock:</span>
+                          <span className="font-bold text-slate-900">
+                            {p.stock_quantity} {p.unit}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {detailTab === "reviews" && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                            Verified Buyer Reviews & Photos
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Real feedback from families and buyers across Nepal
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => requireAuth(() => { setStoryForm({ title: `${p.name} — Great Quality!`, content: "", rating: 5 }); setStoryModalOpen(true); })}
+                          className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
+                        >
+                          + Write a Review
+                        </button>
+                      </div>
+
+                      {approvedBuyerReviews.length === 0 ? (
+                        <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+                          <p className="text-xs font-bold text-slate-700">
+                            No custom photo reviews posted yet.
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            Be the first verified buyer to share a photo review of your harvest order!
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {approvedBuyerReviews.map((br) => (
+                            <div
+                              key={br.id}
+                              className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-xs text-slate-900">
+                                  {br.author_name}
+                                </span>
+                                <div className="flex text-amber-400">
+                                  {Array.from({ length: br.rating || 5 }).map((_, i) => (
+                                    <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
+                                  ))}
+                                </div>
+                              </div>
+                              {br.title && (
+                                <p className="font-bold text-xs text-slate-800">"{br.title}"</p>
+                              )}
+                              <p className="text-xs text-slate-600 italic">"{br.content}"</p>
+                              {br.image && (
+                                <img
+                                  src={
+                                    br.image.startsWith("http")
+                                      ? br.image
+                                      : `${BACKEND_URL}${br.image}`
+                                  }
+                                  alt={br.title || "Review"}
+                                  className="w-full h-32 object-cover rounded-xl border border-slate-200"
+                                />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {detailTab === "delivery" && (
+                    <div className="grid sm:grid-cols-3 gap-4 text-xs">
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                        <p className="font-extrabold text-slate-900 text-sm">
+                          1. Direct Farm Collection
+                        </p>
+                        <p className="text-slate-600 leading-relaxed">
+                          Harvested in the morning and weighed digitally at our collection center with
+                          zero middleman handling.
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                        <p className="font-extrabold text-slate-900 text-sm">
+                          2. Quality Grading & Packing
+                        </p>
+                        <p className="text-slate-600 leading-relaxed">
+                          Packed in breathable, food-safe crates so your vegetables and fruits arrive
+                          crisp and unbruised.
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                        <p className="font-extrabold text-slate-900 text-sm">
+                          3. Instant Receipt & Email Tracking
+                        </p>
+                        <p className="text-slate-600 leading-relaxed">
+                          Receive automated HTML email updates on Confirmation, Discount, and Delivery
+                          plus a 1/4 A4 printable slip.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Daraz-Style "Similar Fresh Harvests You May Like" Section (2-Col Mobile Grid) */}
+              {relatedProducts.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                        MORE FROM NEPALI FARMS
+                      </span>
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900">
+                        Similar Fresh Harvests You May Like
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuickViewProduct(null)}
+                      className="text-xs font-bold text-[#14532D] hover:underline cursor-pointer"
+                    >
+                      View All →
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-4">
+                    {relatedProducts.map((rp) => (
+                      <div
+                        key={rp.id}
+                        onClick={() => {
+                          setQuickViewProduct(rp);
+                          setQuickViewQty(1);
+                        }}
+                        className="bg-white rounded-2xl p-2.5 border border-slate-200/90 shadow-2xs hover:shadow-md transition cursor-pointer flex flex-col justify-between group"
+                      >
+                        <div>
+                          <div className="h-28 sm:h-32 rounded-xl overflow-hidden bg-slate-100 mb-2">
+                            <img
+                              src={getProductImage(rp)}
+                              alt={rp.name}
+                              loading="lazy"
+                              className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                            />
+                          </div>
+                          <p className="text-[10px] font-bold text-emerald-700 truncate">
+                            📍 {rp.origin_location || "Nepal"}
+                          </p>
+                          <h4 className="font-extrabold text-xs text-slate-900 line-clamp-1 mt-0.5 group-hover:text-[#14532D]">
+                            {rp.name}
+                          </h4>
+                        </div>
+                        <div className="pt-2 mt-1 border-t border-slate-100 flex items-baseline justify-between">
+                          <span className="text-xs sm:text-sm font-black text-[#14532D]">
+                            रु {rp.price}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/{rp.unit}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* DARAZ-STYLE STICKY MOBILE BOTTOM ACTION BAR (FOR PRODUCT DETAIL VIEW ON PHONES) */}
+              <div className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-slate-200 px-3 py-2 flex items-center gap-2 shadow-[0_-6px_24px_rgba(0,0,0,0.1)]">
+                <button
+                  type="button"
+                  onClick={() => setQuickViewProduct(null)}
+                  className="flex flex-col items-center justify-center px-2 py-1 text-slate-500 hover:text-[#14532D] text-[10px] font-bold cursor-pointer"
+                >
+                  <Home className="w-4 h-4" />
+                  <span>Shop</span>
+                </button>
+                {!isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => requireAuth(() => setChatDrawerOpen(true))}
+                    className="flex flex-col items-center justify-center px-2 py-1 text-slate-500 hover:text-[#14532D] text-[10px] font-bold cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Chat</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={stockNum <= 0}
+                  onClick={() => handleAddToBasket(p, quickViewQty)}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-50 border border-emerald-300 text-[#14532D] font-extrabold text-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>+ Basket</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={stockNum <= 0}
+                  onClick={() => {
+                    handleAddToBasket(p, quickViewQty);
+                    setBasketDrawerOpen(true);
+                  }}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-[#14532D] text-amber-300 font-black text-xs flex items-center justify-center gap-1 shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <span>⚡ Buy Now (रु {(unitPrice * quickViewQty).toFixed(0)})</span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* MAIN DARAZ-STYLE HOMEPAGE, MARKETPLACE & STORIES */}
-        {(activeTab === "home" || activeTab === "marketplace" || activeTab === "stories") && (
+        {!quickViewProduct && (activeTab === "home" || activeTab === "marketplace" || activeTab === "stories") && (
           <>
             {/* 4. FULL HERO SECTION (SHOWN ON HOME) */}
             {activeTab === "home" && (
@@ -2196,10 +2896,21 @@ export default function App() {
                                   <span className="text-[10px] sm:text-xs text-slate-500">
                                     /{p.unit}
                                   </span>
+                                  {Number(p.actual_price) > Number(p.price) && (
+                                    <span className="ml-1.5 text-[10px] sm:text-xs text-slate-400 line-through font-semibold">
+                                      रु {p.actual_price}
+                                    </span>
+                                  )}
                                 </div>
-                                <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
-                                  Direct Rate
-                                </span>
+                                {Number(p.actual_price) > Number(p.price) ? (
+                                  <span className="px-1.5 sm:px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[9px] sm:text-[10px] font-black">
+                                    -{p.discount_pct || Math.round(((Number(p.actual_price) - Number(p.price)) / Number(p.actual_price)) * 100)}%
+                                  </span>
+                                ) : (
+                                  <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                    Direct Rate
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2640,81 +3351,7 @@ export default function App() {
         </div>
       )}
 
-      {/* PRODUCT QUICK-VIEW DETAIL MODAL (WITH QUANTITY SELECTOR) */}
-      {quickViewProduct && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl">
-            <div className="relative h-60">
-              <img
-                src={getProductImage(quickViewProduct)}
-                alt={quickViewProduct.name}
-                className="w-full h-full object-cover"
-              />
-              <button
-                onClick={() => setQuickViewProduct(null)}
-                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white hover:bg-black cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-              <span className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-white/95 text-slate-900 text-xs font-bold flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5 text-emerald-700" />
-                {quickViewProduct.origin_location || "Nepal Farm"}
-              </span>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className="text-[11px] font-bold uppercase text-emerald-700">
-                    {quickViewProduct.category}
-                  </span>
-                  <h3 className="text-xl font-extrabold text-slate-900">
-                    {quickViewProduct.name}
-                  </h3>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="text-2xl font-black text-[#14532D]">
-                    रु {quickViewProduct.price}
-                  </span>
-                  <span className="text-xs text-slate-500 block">
-                    per {quickViewProduct.unit}
-                  </span>
-                </div>
-              </div>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-2xl">
-                {quickViewProduct.description}
-              </p>
-              <div className="flex items-center justify-between pt-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-700">Quantity:</span>
-                  <button
-                    onClick={() => setQuickViewQty(Math.max(1, quickViewQty - 1))}
-                    className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center cursor-pointer"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="w-8 text-center font-extrabold text-sm">{quickViewQty}</span>
-                  <button
-                    onClick={() => setQuickViewQty(quickViewQty + 1)}
-                    className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <button
-                  onClick={() => {
-                    handleAddToBasket(quickViewProduct, quickViewQty);
-                    setQuickViewProduct(null);
-                  }}
-                  className="px-6 py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
-                >
-                  <ShoppingBag className="w-4 h-4" /> Add to Basket (रु{" "}
-                  {Number(quickViewProduct.price) * quickViewQty})
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+{/* Product Details now open in Full-Page Daraz View inside <main> */}
 
       {/* SLIDE-OUT SHOPPING BASKET & CHECKOUT DRAWER (WITH COD / ESEWA / KHALTI) */}
       {basketDrawerOpen && (
@@ -3439,7 +4076,7 @@ export default function App() {
       )}
 
       {/* DARAZ-STYLE FLOATING MOBILE MINI-BASKET BAR (VISIBLE WHEN ITEMS ARE IN BASKET) */}
-      {totalBasketItems > 0 && !basketDrawerOpen && activeTab !== "admin" && (
+      {totalBasketItems > 0 && !basketDrawerOpen && !quickViewProduct && activeTab !== "admin" && (
         <div className="md:hidden fixed bottom-16 inset-x-3 z-40">
           <button
             type="button"
@@ -3469,7 +4106,7 @@ export default function App() {
       {/* NATIVE-STYLE MOBILE BOTTOM NAVIGATION BAR (VISIBLE ON PHONES < 768px) */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 flex items-center justify-around shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
         <button
-          onClick={() => setActiveTab("home")}
+          onClick={() => { setQuickViewProduct(null); setActiveTab("home"); }}
           className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === "home" ? "text-[#14532D]" : "text-slate-400"
           }`}
@@ -3479,7 +4116,7 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => setActiveTab("marketplace")}
+          onClick={() => { setQuickViewProduct(null); setActiveTab("marketplace"); }}
           className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === "marketplace" ? "text-[#14532D]" : "text-slate-400"
           }`}
