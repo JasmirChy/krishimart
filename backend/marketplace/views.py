@@ -46,10 +46,13 @@ def _load_discount_cache():
                     for k, v in data.get("product_actual_prices", {}).items()
                     if str(v).strip()
                 }
-                return discounts, sent, actual_prices
+                review_products = {
+                    int(k): v for k, v in data.get("review_products", {}).items()
+                }
+                return discounts, sent, actual_prices, review_products
     except Exception:
         pass
-    return {}, set(), {}
+    return {}, set(), {}, {}
 
 
 def _save_discount_cache():
@@ -58,6 +61,7 @@ def _save_discount_cache():
             "discounts": {str(k): str(v) for k, v in ORDER_DISCOUNTS.items()},
             "sent_orders": list(CONFIRMED_EMAIL_SENT_ORDERS),
             "product_actual_prices": {str(k): str(v) for k, v in PRODUCT_ACTUAL_PRICES.items()},
+            "review_products": {str(k): v for k, v in REVIEW_PRODUCT_MAP.items()},
         }
         with open(DISCOUNT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -65,8 +69,8 @@ def _save_discount_cache():
         pass
 
 
-# Tracks applied discount % per order ID and Admin's Actual (Original) Price per Product ID
-ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS, PRODUCT_ACTUAL_PRICES = _load_discount_cache()
+# Tracks applied discount % per order ID, Admin's Actual Price per Product ID, and Product link per Review ID
+ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS, PRODUCT_ACTUAL_PRICES, REVIEW_PRODUCT_MAP = _load_discount_cache()
 
 
 def send_krishimart_email_async(to_email, subject, html_message, plain_message):
@@ -903,12 +907,49 @@ class StoryReviewViewSet(viewsets.ModelViewSet):
             return [AllowAny()]
         return [IsAdminVerified()]
 
+    def _enrich_review(self, item_dict):
+        enriched = dict(item_dict)
+        rid = enriched.get("id")
+        meta = REVIEW_PRODUCT_MAP.get(rid) or {}
+        enriched["product_id"] = meta.get("product_id")
+        enriched["product_name"] = meta.get("product_name")
+        enriched["order_id"] = meta.get("order_id")
+        return enriched
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response([self._enrich_review(item) for item in serializer.data])
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(self._enrich_review(serializer.data))
+
     def perform_create(self, serializer):
         user = self.request.user
         stype = serializer.validated_data.get("story_type")
         if not stype:
             stype = "FARMER_STORY" if user.role == "FARMER" else "BUYER_REVIEW"
-        serializer.save(author=user, story_type=stype, status="PENDING")
+
+        raw_prod_id = self.request.data.get("product_id")
+        raw_prod_name = (self.request.data.get("product_name") or "").strip()
+        raw_order_id = self.request.data.get("order_id")
+
+        # If this is a Verified Delivered-Order Product Review, auto-approve so the product's
+        # review count and rating update immediately (Admin can still moderate/reject anytime).
+        is_verified_product_review = bool(stype == "BUYER_REVIEW" and (raw_prod_id or raw_prod_name))
+        initial_status = "APPROVED" if is_verified_product_review else "PENDING"
+
+        story_obj = serializer.save(author=user, story_type=stype, status=initial_status)
+
+        if raw_prod_id or raw_prod_name:
+            REVIEW_PRODUCT_MAP[story_obj.id] = {
+                "product_id": int(raw_prod_id) if str(raw_prod_id).isdigit() else None,
+                "product_name": raw_prod_name,
+                "order_id": int(raw_order_id) if str(raw_order_id).isdigit() else None,
+            }
+            _save_discount_cache()
 
     @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
     def toggle_status(self, request, pk=None):
@@ -918,4 +959,4 @@ class StoryReviewViewSet(viewsets.ModelViewSet):
             return Response({"error": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
         story.status = new_status
         story.save()
-        return Response(StoryReviewSerializer(story).data)
+        return Response(self._enrich_review(StoryReviewSerializer(story).data))

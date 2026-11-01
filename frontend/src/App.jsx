@@ -198,6 +198,20 @@ export default function App() {
   const [storyForm, setStoryForm] = useState({ title: "", content: "", rating: 5 });
   const [storyImageFile, setStoryImageFile] = useState(null);
   const [storyImagePreview, setStoryImagePreview] = useState(null);
+  const [reviewTargetProduct, setReviewTargetProduct] = useState(null); // { product_id, product_name, order_id }
+
+  // Helper to get all reviews belonging to a specific product
+  const getReviewsForProduct = (product) => {
+    if (!product) return [];
+    const pName = (product.name || "").trim().toLowerCase();
+    return stories.filter((s) => {
+      if (s.story_type !== "BUYER_REVIEW") return false;
+      if (s.product_id && Number(s.product_id) === Number(product.id)) return true;
+      if (s.product_name && s.product_name.trim().toLowerCase() === pName) return true;
+      if (pName && (s.title || "").toLowerCase().includes(pName)) return true;
+      return false;
+    });
+  };
 
   // Farmer's Sales to Admin Ledger
   const [farmerSales, setFarmerSales] = useState([]);
@@ -481,22 +495,38 @@ export default function App() {
     e.preventDefault();
     try {
       const formData = new FormData();
-      formData.append("title", storyForm.title.trim());
+      const finalTitle =
+        storyForm.title.trim() ||
+        (reviewTargetProduct ? `${reviewTargetProduct.product_name} — Verified Review` : "Verified Review");
+      formData.append("title", finalTitle);
       formData.append("content", storyForm.content.trim());
       formData.append("rating", storyForm.rating);
       formData.append(
         "story_type",
-        user.role === "FARMER" ? "FARMER_STORY" : "BUYER_REVIEW"
+        reviewTargetProduct ? "BUYER_REVIEW" : user.role === "FARMER" ? "FARMER_STORY" : "BUYER_REVIEW"
       );
+      if (reviewTargetProduct?.product_id) {
+        formData.append("product_id", reviewTargetProduct.product_id);
+      }
+      if (reviewTargetProduct?.product_name) {
+        formData.append("product_name", reviewTargetProduct.product_name);
+      }
+      if (reviewTargetProduct?.order_id) {
+        formData.append("order_id", reviewTargetProduct.order_id);
+      }
       if (storyImageFile instanceof File) {
         formData.append("image", storyImageFile);
       }
 
       await api.post("/marketplace/stories/", formData);
+      await loadPublicData();
       showToast(
-        "Thank you! Your story/review was sent to the Admin and will appear once approved."
+        reviewTargetProduct
+          ? `Thank you! Your ${storyForm.rating}-star review for ${reviewTargetProduct.product_name} is now live!`
+          : "Thank you! Your story/review was sent to the Admin and will appear once approved."
       );
       setStoryModalOpen(false);
+      setReviewTargetProduct(null);
       setStoryForm({ title: "", content: "", rating: 5 });
       setStoryImageFile(null);
       setStoryImagePreview(null);
@@ -1628,6 +1658,45 @@ export default function App() {
                           >
                             <Receipt className="w-3.5 h-3.5" /> Receipt
                           </button>
+                          {o.status === "DELIVERED" && (() => {
+                            const alreadyReviewed = stories.some(
+                              (s) =>
+                                s.story_type === "BUYER_REVIEW" &&
+                                ((s.order_id && Number(s.order_id) === Number(o.id)) ||
+                                  (s.author_name === user?.full_name &&
+                                    ((s.product_id && Number(s.product_id) === Number(o.product)) ||
+                                      (s.product_name || s.title || "")
+                                        .toLowerCase()
+                                        .includes((o.product_name || "").toLowerCase()))))
+                            );
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReviewTargetProduct({
+                                    product_id: o.product,
+                                    product_name: o.product_name,
+                                    order_id: o.id,
+                                  });
+                                  setStoryForm({
+                                    title: `${o.product_name} — Fresh & Delivered on Time!`,
+                                    content: "",
+                                    rating: 5,
+                                  });
+                                  setStoryModalOpen(true);
+                                }}
+                                className={`px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer ${
+                                  alreadyReviewed
+                                    ? "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
+                                    : "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-2xs"
+                                }`}
+                                title="Rate & review this delivered product"
+                              >
+                                <Star className="w-3.5 h-3.5 fill-current" />
+                                {alreadyReviewed ? "Add / Update Review" : "Write Review"}
+                              </button>
+                            );
+                          })()}
                           {matchedProductForReorder && Number(matchedProductForReorder.stock_quantity) > 0 && (
                             <button
                               type="button"
@@ -1785,21 +1854,25 @@ export default function App() {
             ? Math.max(1, Math.round(((actualOriginalPrice - unitPrice) / actualOriginalPrice) * 100))
             : 0;
 
-          // Calculate live dynamic rating from approvedBuyerReviews
-          const productMatchingReviews = approvedBuyerReviews.filter(
-            (r) =>
-              (r.title && r.title.toLowerCase().includes((p.name || "").toLowerCase())) ||
-              (r.content && r.content.toLowerCase().includes((p.name || "").toLowerCase()))
-          );
-          const reviewsForRating =
-            productMatchingReviews.length > 0 ? productMatchingReviews : approvedBuyerReviews;
+          // Strictly get reviews for THIS specific product
+          const productSpecificReviews = getReviewsForProduct(p);
+          const productReviewCount = productSpecificReviews.length;
           const avgRating =
-            reviewsForRating.length > 0
+            productReviewCount > 0
               ? (
-                  reviewsForRating.reduce((sum, r) => sum + Number(r.rating || 5), 0) /
-                  reviewsForRating.length
+                  productSpecificReviews.reduce((sum, r) => sum + Number(r.rating || 5), 0) /
+                  productReviewCount
                 ).toFixed(1)
-              : "5.0";
+              : "0.0";
+
+          // Check if current logged-in customer has a DELIVERED order for this product
+          const deliveredOrderForProduct = (Array.isArray(myOrders) ? myOrders : []).find(
+            (o) =>
+              o.status === "DELIVERED" &&
+              (Number(o.product) === Number(p.id) ||
+                (o.product_name || "").trim().toLowerCase() ===
+                  (p.name || "").trim().toLowerCase())
+          );
           const basketItem = basket.find((item) => item.id === p.id);
           const qtyInBasket = basketItem ? basketItem.qty : 0;
 
@@ -1917,14 +1990,24 @@ export default function App() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => setDetailTab("reviews")}
-                        className="flex items-center gap-1 text-amber-500 text-xs font-bold hover:underline cursor-pointer"
+                        onClick={() => {
+                          setDetailTab("reviews");
+                          setTimeout(() => {
+                            document
+                              .getElementById("daraz-product-reviews-section")
+                              ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }, 60);
+                        }}
+                        className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-600 text-xs font-bold transition cursor-pointer"
+                        title="Click to view verified customer reviews for this product"
                       >
                         <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                        <span className="text-slate-800 font-extrabold">{avgRating}</span>
-                        <span className="text-slate-400 font-normal">
-                          ({approvedBuyerReviews.length}{" "}
-                          {approvedBuyerReviews.length === 1 ? "Customer Review" : "Customer Reviews"})
+                        <span className="text-slate-900 font-extrabold">
+                          {productReviewCount > 0 ? avgRating : "New"}
+                        </span>
+                        <span className="text-slate-600 font-semibold underline decoration-dotted">
+                          ({productReviewCount}{" "}
+                          {productReviewCount === 1 ? "Customer Review" : "Customer Reviews"})
                         </span>
                       </button>
                     </div>
@@ -2168,13 +2251,16 @@ export default function App() {
               </div>
 
               {/* Daraz-Style Detailed Specifications, Buyer Reviews & Delivery Tabs */}
-              <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs overflow-hidden">
+              <div
+                id="daraz-product-reviews-section"
+                className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs overflow-hidden scroll-mt-24"
+              >
                 <div className="flex border-b border-slate-200 overflow-x-auto no-scrollbar bg-slate-50/70">
                   {[
                     { id: "specs", label: "📋 Product Details & Farm Specs" },
                     {
                       id: "reviews",
-                      label: `⭐ Verified Customer Reviews (${approvedBuyerReviews.length})`,
+                      label: `⭐ Customer Reviews (${productReviewCount})`,
                     },
                     { id: "delivery", label: "🚚 Hub Quality & Delivery Info" },
                   ].map((tb) => (
@@ -2255,65 +2341,197 @@ export default function App() {
                   )}
 
                   {detailTab === "reviews" && (
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                            Verified Buyer Reviews & Photos
-                          </h3>
-                          <p className="text-xs text-slate-500">
-                            Real feedback from families and buyers across Nepal
+                    <div className="space-y-6">
+                      {/* Daraz-Style Rating Summary & 5-Star Progress Bars */}
+                      <div className="bg-slate-50/90 rounded-2xl p-4 sm:p-6 border border-slate-200/90 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                        {/* Left Score Box */}
+                        <div className="md:col-span-4 text-center md:border-r border-slate-200/80 md:pr-4 space-y-1.5">
+                          <div className="flex items-baseline justify-center gap-1">
+                            <span className="text-3xl sm:text-4xl font-black text-slate-900">
+                              {productReviewCount > 0 ? avgRating : "0.0"}
+                            </span>
+                            <span className="text-base font-bold text-slate-400">/ 5.0</span>
+                          </div>
+                          <div className="flex items-center justify-center gap-1 text-amber-400">
+                            {[1, 2, 3, 4, 5].map((st) => (
+                              <Star
+                                key={st}
+                                className={`w-4 h-4 ${
+                                  productReviewCount > 0 && st <= Math.round(Number(avgRating))
+                                    ? "fill-amber-400 text-amber-400"
+                                    : "text-slate-300"
+                                }`}
+                              />
+                            ))}
+                          </div>
+                          <p className="text-xs font-bold text-slate-600">
+                            {productReviewCount}{" "}
+                            {productReviewCount === 1
+                              ? "Verified Purchase Rating"
+                              : "Verified Purchase Ratings"}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => requireAuth(() => { setStoryForm({ title: `${p.name} — Great Quality!`, content: "", rating: 5 }); setStoryModalOpen(true); })}
-                          className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
-                        >
-                          + Write a Review
-                        </button>
+
+                        {/* Middle 5-Star to 1-Star Breakdown Bars */}
+                        <div className="md:col-span-5 space-y-1.5">
+                          {[5, 4, 3, 2, 1].map((starVal) => {
+                            const countForStar = productSpecificReviews.filter(
+                              (r) => Number(r.rating || 5) === starVal
+                            ).length;
+                            const pct =
+                              productReviewCount > 0
+                                ? Math.round((countForStar / productReviewCount) * 100)
+                                : 0;
+                            return (
+                              <div key={starVal} className="flex items-center gap-2.5 text-xs">
+                                <span className="w-12 font-bold text-slate-700 flex items-center gap-1 shrink-0">
+                                  {starVal} <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                                </span>
+                                <div className="flex-1 h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                                  <div
+                                    className="h-full bg-amber-400 rounded-full transition-all duration-300"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="w-8 text-right font-bold text-slate-500 text-[11px]">
+                                  {countForStar}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Right Verified Delivered Buyer Action Box */}
+                        <div className="md:col-span-3 flex flex-col items-center md:items-end justify-center text-center md:text-right space-y-2">
+                          {deliveredOrderForProduct ? (
+                            <>
+                              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-extrabold">
+                                ✓ Verified Delivered Buyer
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReviewTargetProduct({
+                                    product_id: p.id,
+                                    product_name: p.name,
+                                    order_id: deliveredOrderForProduct.id,
+                                  });
+                                  setStoryForm({
+                                    title: `${p.name} — Great Quality!`,
+                                    content: "",
+                                    rating: 5,
+                                  });
+                                  setStoryModalOpen(true);
+                                }}
+                                className="w-full py-2.5 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 shadow-2xs transition cursor-pointer"
+                              >
+                                <Star className="w-3.5 h-3.5 fill-current" />
+                                Write Product Review
+                              </button>
+                            </>
+                          ) : (
+                            <div className="bg-white rounded-xl p-3 border border-slate-200/90 text-[11px] text-slate-600 space-y-1.5 w-full">
+                              <p className="font-extrabold text-slate-800 flex items-center justify-center md:justify-end gap-1">
+                                <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                100% Verified Reviews
+                              </p>
+                              <p className="text-[10px] text-slate-500 leading-snug">
+                                Only customers who have received a{" "}
+                                <strong className="text-emerald-800">DELIVERED</strong> order for{" "}
+                                <strong>{p.name}</strong> can add a review.
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      {approvedBuyerReviews.length === 0 ? (
-                        <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
-                          <p className="text-xs font-bold text-slate-700">
-                            No custom photo reviews posted yet.
+                      {/* Daraz-Style Customer Reviews Feed */}
+                      {productSpecificReviews.length === 0 ? (
+                        <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                          <Star className="w-8 h-8 text-amber-300 mx-auto" />
+                          <p className="text-xs sm:text-sm font-extrabold text-slate-700">
+                            No verified customer reviews for {p.name} yet
                           </p>
-                          <p className="text-[11px] text-slate-500">
-                            Be the first verified buyer to share a photo review of your harvest order!
+                          <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                            Once a customer orders {p.name} and their order is marked as{" "}
+                            <strong>DELIVERED</strong>, they can rate and review it from{" "}
+                            <strong>My Orders</strong> or right here!
                           </p>
                         </div>
                       ) : (
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {approvedBuyerReviews.map((br) => (
+                        <div className="space-y-3">
+                          {productSpecificReviews.map((br) => (
                             <div
                               key={br.id}
-                              className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2"
+                              className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs space-y-2.5"
                             >
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-xs text-slate-900">
-                                  {br.author_name}
-                                </span>
-                                <div className="flex text-amber-400">
-                                  {Array.from({ length: br.rating || 5 }).map((_, i) => (
-                                    <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-9 h-9 rounded-full bg-[#14532D] text-white font-black text-xs flex items-center justify-center overflow-hidden">
+                                    {br.author_avatar ? (
+                                      <img
+                                        src={
+                                          br.author_avatar.startsWith("http")
+                                            ? br.author_avatar
+                                            : `${BACKEND_URL}${br.author_avatar}`
+                                        }
+                                        alt={br.author_name}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <span>{(br.author_name || "U").charAt(0).toUpperCase()}</span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-extrabold text-xs sm:text-sm text-slate-900">
+                                        {br.author_name}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-[10px] font-extrabold flex items-center gap-1">
+                                        ✓ Verified Purchase
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">
+                                      Reviewed on{" "}
+                                      {new Date(br.created_at || Date.now()).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-0.5 text-amber-400">
+                                  {[1, 2, 3, 4, 5].map((st) => (
+                                    <Star
+                                      key={st}
+                                      className={`w-3.5 h-3.5 ${
+                                        st <= Number(br.rating || 5)
+                                          ? "fill-amber-400 text-amber-400"
+                                          : "text-slate-200"
+                                      }`}
+                                    />
                                   ))}
                                 </div>
                               </div>
+
                               {br.title && (
-                                <p className="font-bold text-xs text-slate-800">"{br.title}"</p>
+                                <p className="font-extrabold text-xs sm:text-sm text-slate-800">
+                                  {br.title}
+                                </p>
                               )}
-                              <p className="text-xs text-slate-600 italic">"{br.content}"</p>
+                              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                                {br.content}
+                              </p>
                               {br.image && (
-                                <img
-                                  src={
-                                    br.image.startsWith("http")
-                                      ? br.image
-                                      : `${BACKEND_URL}${br.image}`
-                                  }
-                                  alt={br.title || "Review"}
-                                  className="w-full h-32 object-cover rounded-xl border border-slate-200"
-                                />
+                                <div className="pt-1">
+                                  <img
+                                    src={
+                                      br.image.startsWith("http")
+                                        ? br.image
+                                        : `${BACKEND_URL}${br.image}`
+                                    }
+                                    alt={br.title || "Customer review photo"}
+                                    className="w-28 h-28 sm:w-36 sm:h-36 object-cover rounded-2xl border border-slate-200 shadow-2xs"
+                                  />
+                                </div>
                               )}
                             </div>
                           ))}
@@ -3266,17 +3484,58 @@ export default function App() {
             onSubmit={handleStorySubmit}
             className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl"
           >
-            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-              <h3 className="text-lg font-extrabold text-slate-900">
-                {user.role === "FARMER" ? "Share Your Farmer Story" : "Write a Buyer Review"}
-              </h3>
+            <div className="flex justify-between items-center border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  {reviewTargetProduct
+                    ? "Rate & Review Delivered Product"
+                    : user.role === "FARMER"
+                    ? "Share Your Farmer Story"
+                    : "Write a Buyer Review"}
+                </h3>
+                {reviewTargetProduct && (
+                  <p className="text-xs font-bold text-emerald-700 mt-0.5">
+                    ✓ Verified Delivered Order #{reviewTargetProduct.order_id} •{" "}
+                    {reviewTargetProduct.product_name}
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={() => setStoryModalOpen(false)}
-                className="p-1 text-slate-400"
+                onClick={() => {
+                  setStoryModalOpen(false);
+                  setReviewTargetProduct(null);
+                }}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* Interactive Daraz 5-Star Tap Selector */}
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-3 flex items-center justify-between">
+              <span className="text-xs font-extrabold text-slate-800">Tap to Rate:</span>
+              <div className="flex items-center gap-1.5">
+                {[1, 2, 3, 4, 5].map((starNum) => (
+                  <button
+                    key={starNum}
+                    type="button"
+                    onClick={() => setStoryForm({ ...storyForm, rating: starNum })}
+                    className="p-0.5 transition transform hover:scale-110 cursor-pointer"
+                  >
+                    <Star
+                      className={`w-6 h-6 ${
+                        starNum <= Number(storyForm.rating || 5)
+                          ? "fill-amber-400 text-amber-400"
+                          : "text-slate-300"
+                      }`}
+                    />
+                  </button>
+                ))}
+                <span className="ml-1 text-xs font-black text-amber-800">
+                  {storyForm.rating}/5
+                </span>
+              </div>
             </div>
             <input
               type="text"
