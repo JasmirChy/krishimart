@@ -98,6 +98,351 @@ function fileToCompressedDataUri(file, maxDim = 700, quality = 0.82) {
   });
 }
 
+
+// ============================================================================
+// OFFICIAL KRISHIMART HUB COORDINATES: 28°42'11.4"N 80°36'36.1"E
+// Decimal Degrees: 28.703167° N, 80.610028° E (Campus Chowk Area, Dhangadhi)
+// ============================================================================
+const ADMIN_KRISHIMART_HUB = {
+  lat: 28.703167,
+  lng: 80.610028,
+  dms: "28°42'11.4\"N 80°36'36.1\"E",
+  name: "KrishiMart Hub (Campus Chowk, Dhangadhi)",
+};
+
+const ADMIN_DHANGADHI_LOCATIONS = [
+  { name: "Campus Chowk", lat: 28.703167, lng: 80.610028, km: 0.5 },
+  { name: "Buddha Chowk", lat: 28.6983, lng: 80.6057, km: 0.6 },
+  { name: "Pushpalal Chowk", lat: 28.7049, lng: 80.6073, km: 1.0 },
+  { name: "Shivnagar", lat: 28.7015, lng: 80.5962, km: 1.0 },
+  { name: "Shivanagar", lat: 28.7015, lng: 80.5962, km: 1.0 },
+  { name: "Hasanpur", lat: 28.7036, lng: 80.5924, km: 1.3 },
+  { name: "Moti Chowk", lat: 28.6963, lng: 80.6121, km: 1.4 },
+  { name: "Bhanu Chowk", lat: 28.6987, lng: 80.6136, km: 1.5 },
+  { name: "LN Chowk", lat: 28.705, lng: 80.5845, km: 2.2 },
+  { name: "Covered Hall", lat: 28.7062, lng: 80.5872, km: 2.3 },
+  { name: "Taranagar", lat: 28.7118, lng: 80.5842, km: 3.0 },
+  { name: "Traffic Chowk", lat: 28.7025, lng: 80.5777, km: 3.1 },
+  { name: "Chauraha", lat: 28.7025, lng: 80.5777, km: 3.1 },
+  { name: "Ratopul", lat: 28.705, lng: 80.5756, km: 3.2 },
+  { name: "Ratopool", lat: 28.705, lng: 80.5756, km: 3.2 },
+  { name: "Santoshi Tole", lat: 28.6992, lng: 80.5748, km: 3.4 },
+  { name: "Uttarbehadi", lat: 28.7145, lng: 80.5805, km: 3.6 },
+  { name: "Uttar Behadi", lat: 28.7145, lng: 80.5805, km: 3.6 },
+  { name: "Baiyabehadi", lat: 28.6975, lng: 80.5712, km: 3.7 },
+  { name: "Baiya Behadi", lat: 28.6975, lng: 80.5712, km: 3.7 },
+  { name: "Shivpuri", lat: 28.7172, lng: 80.5772, km: 4.0 },
+  { name: "Bishalnagar", lat: 28.7082, lng: 80.5665, km: 4.8 },
+  { name: "Bishal Nagar", lat: 28.7082, lng: 80.5665, km: 4.8 },
+  { name: "Milan Chowk", lat: 28.7042, lng: 80.5625, km: 5.0 },
+  { name: "Chatakpur", lat: 28.7185, lng: 80.5682, km: 5.0 },
+  { name: "Boradandi", lat: 28.7226, lng: 80.5658, km: 5.2 },
+  { name: "Rajpur", lat: 28.7428, lng: 80.5692, km: 7.5 },
+  { name: "Jugeda", lat: 28.6568, lng: 80.625, km: 7.9 },
+  { name: "Geta", lat: 28.765, lng: 80.568, km: 13.3 },
+];
+
+function computeAdminHaversineRoadKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.max(0.2, Number((R * c * 1.28).toFixed(1)));
+}
+
+function resolveOrderMapDetails(order, fin = {}) {
+  const rawAddress = String(order?.delivery_address || "Hasanpur, Dhangadhi");
+  const cleanAddress = rawAddress
+    .replace(/\s*\([^)]*km[^)]*\)/gi, "")
+    .replace(/\s*\[(COD|ESEWA|KHALTI)\]/gi, "")
+    .trim();
+
+  let lat = fin.deliveryLat !== null && fin.deliveryLat !== undefined ? Number(fin.deliveryLat) : null;
+  let lng = fin.deliveryLng !== null && fin.deliveryLng !== undefined ? Number(fin.deliveryLng) : null;
+  let km = fin.distanceKm !== null && fin.distanceKm !== undefined ? Number(fin.distanceKm) : null;
+  let isExactPin = Boolean(lat && lng && !Number.isNaN(lat) && !Number.isNaN(lng));
+
+  // Also check if coordinates were embedded in the address text like "(28.7036, 80.5924)"
+  if (!isExactPin) {
+    const coordMatch = rawAddress.match(/\(\s*(28\.\d+)\s*,\s*(80\.\d+)\s*\)/);
+    if (coordMatch) {
+      lat = Number(coordMatch[1]);
+      lng = Number(coordMatch[2]);
+      isExactPin = true;
+    }
+  }
+
+  // Fallback: match against known Dhangadhi landmarks in delivery_address
+  if (!isExactPin) {
+    const addrLower = rawAddress.toLowerCase();
+    const matchedLoc = ADMIN_DHANGADHI_LOCATIONS.find((loc) =>
+      addrLower.includes(loc.name.toLowerCase())
+    );
+    if (matchedLoc) {
+      lat = matchedLoc.lat;
+      lng = matchedLoc.lng;
+      if (km === null || Number.isNaN(km)) km = matchedLoc.km;
+    } else {
+      lat = 28.7036;
+      lng = 80.5924;
+      if (km === null || Number.isNaN(km)) km = 1.3;
+    }
+  }
+
+  if (km === null || Number.isNaN(km)) {
+    km = computeAdminHaversineRoadKm(ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng, lat, lng);
+  }
+
+  return {
+    lat,
+    lng,
+    km: Number(Number(km).toFixed(1)),
+    cleanAddress: cleanAddress || "Dhangadhi, Kailali",
+    isExactPin,
+  };
+}
+
+let adminLeafletPromise = null;
+function ensureAdminLeafletLoaded() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.L) return Promise.resolve(window.L);
+  if (adminLeafletPromise) return adminLeafletPromise;
+
+  adminLeafletPromise = new Promise((resolve) => {
+    if (!document.getElementById("krishimart-leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "krishimart-leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(link);
+    }
+    const existingScript = document.querySelector('script[src*="leaflet.js"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(window.L || null));
+      if (window.L) return resolve(window.L);
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      script.async = true;
+      script.onload = () => resolve(window.L || null);
+      script.onerror = () => resolve(null);
+      document.body.appendChild(script);
+    }
+  });
+  return adminLeafletPromise;
+}
+
+function AdminOrderRouteMap({ order, mapDetails, onRouteStats }) {
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+
+  const handleFitRoute = () => {
+    const map = mapInstanceRef.current;
+    const L = window.L;
+    if (!map || !L) return;
+    const bounds = L.latLngBounds(
+      [ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng],
+      [mapDetails.lat, mapDetails.lng]
+    );
+    map.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
+  };
+
+  const handleZoomHub = () => {
+    mapInstanceRef.current?.setView([ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng], 16, {
+      animate: true,
+    });
+  };
+
+  const handleZoomCustomer = () => {
+    mapInstanceRef.current?.setView([mapDetails.lat, mapDetails.lng], 16, {
+      animate: true,
+    });
+  };
+
+  useEffect(() => {
+    let active = true;
+    ensureAdminLeafletLoaded().then((L) => {
+      if (!active || !L || !mapContainerRef.current) return;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+
+      const map = L.map(mapContainerRef.current, {
+        center: [mapDetails.lat, mapDetails.lng],
+        zoom: 14,
+        scrollWheelZoom: true,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+
+      // 1. KrishiMart Hub Marker (28°42'11.4"N 80°36'36.1"E)
+      const hubIcon = L.divIcon({
+        className: "km-admin-hub-pin",
+        html: `<div style="background:#14532D;color:#ffffff;border:3px solid #fbbf24;border-radius:999px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:17px;box-shadow:0 4px 12px rgba(0,0,0,0.35);">🌱</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      L.marker([ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng], { icon: hubIcon })
+        .addTo(map)
+        .bindPopup(
+          `<div style="font-size:12px;line-height:1.4;"><strong>🌱 KrishiMart Hub (Origin)</strong><br/>${ADMIN_KRISHIMART_HUB.dms}<br/>Campus Chowk, Dhangadhi</div>`
+        );
+
+      // 2. 7 km Free-Delivery Radius Circle
+      L.circle([ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng], {
+        radius: (7 / 1.28) * 1000,
+        color: "#16a34a",
+        weight: 1.5,
+        dashArray: "6 6",
+        fillColor: "#22c55e",
+        fillOpacity: 0.05,
+      }).addTo(map);
+
+      // 3. Customer Delivery Destination Pin
+      const custIcon = L.divIcon({
+        className: "km-admin-cust-pin",
+        html: `<div style="background:#dc2626;color:#ffffff;border:3px solid #ffffff;border-radius:999px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 6px 16px rgba(220,38,38,0.5);">📍</div>`,
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
+      });
+
+      const custMarker = L.marker([mapDetails.lat, mapDetails.lng], { icon: custIcon })
+        .addTo(map)
+        .bindPopup(
+          `<div style="font-size:12px;line-height:1.45;min-width:170px;">
+            <strong style="color:#14532D;">Order #KM-ORD-${order.id}</strong><br/>
+            <strong>👤 ${order.buyer_name || "Customer"}</strong><br/>
+            📞 ${order.contact_phone || "—"}<br/>
+            📦 ${order.product_name} (${order.quantity} ${order.product_unit})<br/>
+            📍 ${mapDetails.cleanAddress}
+          </div>`
+        );
+
+      // 4. Route Polyline (starts with direct dashed line, upgrades to OSRM street geometry)
+      const routeLine = L.polyline(
+        [
+          [ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng],
+          [mapDetails.lat, mapDetails.lng],
+        ],
+        {
+          color: "#14532D",
+          weight: 5,
+          opacity: 0.9,
+          dashArray: "8 6",
+        }
+      ).addTo(map);
+
+      const bounds = L.latLngBounds(
+        [ADMIN_KRISHIMART_HUB.lat, ADMIN_KRISHIMART_HUB.lng],
+        [mapDetails.lat, mapDetails.lng]
+      );
+      map.fitBounds(bounds, { padding: [55, 55], maxZoom: 16 });
+      setTimeout(() => {
+        if (active) custMarker.openPopup();
+      }, 250);
+
+      // Fetch OSRM driving route geometry & duration
+      fetch(
+        `https://router.project-osrm.org/route/v1/driving/${ADMIN_KRISHIMART_HUB.lng},${ADMIN_KRISHIMART_HUB.lat};${mapDetails.lng},${mapDetails.lat}?overview=full&geometries=geojson`
+      )
+        .then((r) => r.json())
+        .then((data) => {
+          if (!active) return;
+          const route = data?.routes?.[0];
+          if (route) {
+            if (route.geometry?.coordinates) {
+              const latLngs = route.geometry.coordinates.map(([ln, lt]) => [lt, ln]);
+              routeLine.setLatLngs(latLngs);
+              routeLine.setStyle({ dashArray: null, color: "#14532D", weight: 5 });
+            }
+            const osrmKm = route.distance
+              ? Math.max(0.2, Number((route.distance / 1000).toFixed(1)))
+              : mapDetails.km;
+            const etaMinutes = route.duration
+              ? Math.max(2, Math.round(route.duration / 60))
+              : Math.max(3, Math.round(osrmKm * 2.5));
+            if (onRouteStats) {
+              onRouteStats({ km: osrmKm, etaMinutes });
+            }
+          }
+        })
+        .catch(() => {});
+
+      mapInstanceRef.current = map;
+    });
+
+    return () => {
+      active = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [order?.id, mapDetails.lat, mapDetails.lng]);
+
+  return (
+    <div className="space-y-2.5">
+      {/* Quick Camera Zoom Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[#14532D]">
+            🌱 Hub Origin
+          </span>
+          <span>→</span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-700">
+            📍 Customer Pin
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleFitRoute}
+            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold transition cursor-pointer"
+          >
+            🎯 Fit Full Route
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomHub}
+            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-[11px] font-extrabold transition cursor-pointer"
+          >
+            🌱 Zoom Hub
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomCustomer}
+            className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[11px] font-extrabold transition cursor-pointer"
+          >
+            📍 Zoom Customer
+          </button>
+        </div>
+      </div>
+
+      {/* Interactive Leaflet Map Canvas */}
+      <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-700/40 shadow-md bg-slate-100">
+        <div ref={mapContainerRef} className="w-full h-72 sm:h-96 z-10" />
+        <div className="bg-slate-900/95 text-white px-3.5 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2">
+          <span>
+            🌱 <strong>Hub:</strong> {ADMIN_KRISHIMART_HUB.dms}
+          </span>
+          <span className="text-amber-300 font-bold">
+            📍 <strong>Customer Pin:</strong> {mapDetails.lat.toFixed(5)}° N, {mapDetails.lng.toFixed(5)}° E
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPanel() {
   const [subTab, setSubTab] = useState("users");
   const [users, setUsers] = useState([]);
@@ -160,6 +505,8 @@ export default function AdminPanel() {
   // Edit Product Modal state
   const [editingProduct, setEditingProduct] = useState(null);
   const [receiptOrder, setReceiptOrder] = useState(null);
+  const [mapPreviewOrder, setMapPreviewOrder] = useState(null);
+  const [mapRouteStats, setMapRouteStats] = useState(null);
   const [receiptDiscount, setReceiptDiscount] = useState(0);
   const [orderDiscounts, setOrderDiscounts] = useState(() => {
     try {
@@ -3088,18 +3435,18 @@ const handleOrderStatus = async (orderId, status) => {
                       🚚 Delivery{distanceKm !== null && !Number.isNaN(distanceKm) ? ` (${distanceKm} km)` : ""}:{" "}
                       {isFreeDelivery ? "FREE (रु 0)" : `+ रु ${deliveryCharge.toFixed(2)}`}
                     </span>
-                    {deliveryLat && deliveryLng && (
-                      <a
-                        href={`https://www.google.com/maps/dir/28.703167,80.610028/${deliveryLat},${deliveryLng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-2.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-extrabold inline-flex items-center gap-1 transition"
-                        title="Open turn-by-turn route from KrishiMart Hub (28°42'11.4&quot;N 80°36'36.1&quot;E) to customer pin"
-                      >
-                        <MapPin className="w-3 h-3" />
-                        <span>View Map Route</span>
-                      </a>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMapRouteStats(null);
+                        setMapPreviewOrder(o);
+                      }}
+                      className="px-2.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-extrabold inline-flex items-center gap-1 transition cursor-pointer"
+                      title="Open inline interactive delivery route map inside Admin Panel"
+                    >
+                      <MapPin className="w-3 h-3" />
+                      <span>🗺️ View Inline Map</span>
+                    </button>
                     <span>•</span>
                     <span className="font-black text-[#14532D] text-sm">
                       Total Payable: रु {netPayable.toFixed(2)}
@@ -3126,7 +3473,18 @@ const handleOrderStatus = async (orderId, status) => {
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div> */}
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapRouteStats(null);
+                      setMapPreviewOrder(o);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    title="Preview Customer Dropped Pin & Delivery Route on Map"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-red-600" /> Map Route
+                  </button>
                   {(o.status === "CONFIRMED" || o.status === "DELIVERED") && (
                     <button
                       type="button"
@@ -4956,6 +5314,181 @@ const handleOrderStatus = async (orderId, status) => {
           </form>
         </div>
       )}
+      {/* ADMIN INLINE INTERACTIVE DELIVERY MAP & DISPATCH ROUTE MODAL */}
+      {mapPreviewOrder && (() => {
+        const fin = getOrderNetFinancials(mapPreviewOrder);
+        const mapDetails = resolveOrderMapDetails(mapPreviewOrder, fin);
+        const displayKm = mapRouteStats?.km ?? mapDetails.km;
+        const displayEta =
+          mapRouteStats?.etaMinutes ?? Math.max(3, Math.round(displayKm * 2.5));
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn">
+            <div className="bg-white rounded-3xl max-w-3xl w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto">
+              {/* Modal Top Header */}
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3.5">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-black uppercase tracking-wider">
+                      🗺️ Live Admin Dispatch Map
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-black">
+                      #KM-ORD-{mapPreviewOrder.id}
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${
+                        mapPreviewOrder.status === "DELIVERED"
+                          ? "bg-emerald-100 text-[#14532D]"
+                          : mapPreviewOrder.status === "CONFIRMED"
+                          ? "bg-blue-100 text-blue-800"
+                          : mapPreviewOrder.status === "CANCELLED"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-900"
+                      }`}
+                    >
+                      {mapPreviewOrder.status}
+                    </span>
+                  </div>
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900">
+                    {mapPreviewOrder.product_name} ({mapPreviewOrder.quantity} {mapPreviewOrder.product_unit}) —{" "}
+                    <span className="text-[#14532D]">{mapPreviewOrder.buyer_name}</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    📞 <strong>{mapPreviewOrder.contact_phone}</strong> • 📍{" "}
+                    <strong>{mapPreviewOrder.delivery_address}</strong>
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setMapPreviewOrder(null)}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                  title="Close Map Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 4-Card Dispatch & Route KPI Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200/80">
+                  <p className="text-[10px] font-extrabold uppercase text-emerald-800">
+                    🌱 Hub Origin
+                  </p>
+                  <p className="text-xs font-black text-slate-900 mt-0.5 truncate">
+                    Campus Chowk Hub
+                  </p>
+                  <p className="text-[10px] text-slate-500 truncate">
+                    {ADMIN_KRISHIMART_HUB.dms}
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-red-50/70 border border-red-200/80">
+                  <p className="text-[10px] font-extrabold uppercase text-red-800">
+                    📍 Customer Pin
+                  </p>
+                  <p className="text-xs font-black text-slate-900 mt-0.5 truncate">
+                    {mapDetails.cleanAddress}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    {mapDetails.isExactPin ? "✓ Exact Dropped Pin" : "✓ Area Landmark Pin"}
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-blue-50/70 border border-blue-200/80">
+                  <p className="text-[10px] font-extrabold uppercase text-blue-800">
+                    📏 Road Distance &amp; ETA
+                  </p>
+                  <p className="text-sm font-black text-blue-950 mt-0.5">
+                    {displayKm} km • ~{displayEta} min
+                  </p>
+                  <p className="text-[10px] text-blue-700 font-semibold">
+                    Rate: रु {deliveryRatePerKm}/km
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-amber-50/80 border border-amber-200/90">
+                  <p className="text-[10px] font-extrabold uppercase text-amber-900">
+                    💰 Total Payable
+                  </p>
+                  <p className="text-sm font-black text-[#14532D] mt-0.5">
+                    रु {fin.netPayable.toFixed(2)}
+                  </p>
+                  <p className="text-[10px] text-amber-800 font-bold">
+                    Delivery: {fin.isFreeDelivery ? "FREE (रु 0)" : `+रु ${fin.deliveryCharge.toFixed(2)}`}
+                  </p>
+                </div>
+              </div>
+
+              {/* Interactive Leaflet Route Map */}
+              <AdminOrderRouteMap
+                order={mapPreviewOrder}
+                mapDetails={mapDetails}
+                onRouteStats={(stats) => setMapRouteStats(stats)}
+              />
+
+              {/* Bottom Dispatch Controls & External Google Maps Turn-by-Turn Link */}
+              <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-extrabold text-slate-700">Order Status:</span>
+                  <select
+                    value={mapPreviewOrder.status}
+                    onChange={(e) => {
+                      const nextStatus = e.target.value;
+                      handleOrderStatus(mapPreviewOrder.id, nextStatus);
+                      setMapPreviewOrder((prev) =>
+                        prev ? { ...prev, status: nextStatus } : null
+                      );
+                    }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-extrabold bg-slate-50 text-slate-900 outline-none focus:border-[#14532D] cursor-pointer"
+                  >
+                    <option value="PENDING">⏳ PENDING</option>
+                    <option value="CONFIRMED">📦 CONFIRMED</option>
+                    <option value="DELIVERED">✓ DELIVERED</option>
+                    <option value="CANCELLED">✕ CANCELLED</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetOrd = mapPreviewOrder;
+                      setMapPreviewOrder(null);
+                      setReceiptDiscount(orderDiscounts[targetOrd.id] ?? 0);
+                      setReceiptOrder({
+                        ...targetOrd,
+                        original_subtotal: getTrueOrderSubtotal(targetOrd),
+                      });
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Receipt className="w-3.5 h-3.5" /> Open 1/4 A4 Receipt
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={`https://www.google.com/maps/dir/${ADMIN_KRISHIMART_HUB.lat},${ADMIN_KRISHIMART_HUB.lng}/${mapDetails.lat},${mapDetails.lng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 shadow-sm transition"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>Open Rider Navigation (Google Maps)</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setMapPreviewOrder(null)}
+                    className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-extrabold transition cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL */}
       {/* 1/4 A4 ORDER RECEIPT PREVIEW, PRINT & DOWNLOAD MODAL (WITH DISCOUNT %) */}
       {receiptOrder && (() => {
