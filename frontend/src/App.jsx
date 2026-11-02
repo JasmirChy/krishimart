@@ -471,6 +471,7 @@ export default function App() {
   });
   const [paymentMethod, setPaymentMethod] = useState("COD");
   const [basketDrawerOpen, setBasketDrawerOpen] = useState(false);
+  const [basketRecCategory, setBasketRecCategory] = useState("ALL");
   const [checkoutAddress, setCheckoutAddress] = useState("");
   const [checkoutPhone, setCheckoutPhone] = useState("");
   const [checkingOut, setCheckingOut] = useState(false);
@@ -829,20 +830,27 @@ export default function App() {
     actionCallback();
   };
 
-  const handleAddToBasket = (product, qtyToAdd = 1) => {
+  const handleAddToBasket = (product, qtyToAdd = 1, openDrawer = false) => {
     requireAuth(() => {
       setBasket((prev) => {
         const existing = prev.find((item) => item.id === product.id);
         if (existing) {
           return prev.map((item) =>
-            item.id === product.id ? { ...item, qty: item.qty + qtyToAdd } : item
+            item.id === product.id ? { ...item, ...product, qty: item.qty + qtyToAdd } : item
           );
         }
         return [...prev, { ...product, qty: qtyToAdd }];
       });
       showToast(`Added ${qtyToAdd} ${product.unit} of ${product.name} to basket!`);
-      setBasketDrawerOpen(true);
+      if (openDrawer) {
+        setBasketDrawerOpen(true);
+      }
     });
+  };
+
+  const handleRemoveFromBasket = (productId, productName = "Item") => {
+    setBasket((prev) => prev.filter((item) => item.id !== productId));
+    showToast(`Removed ${productName} from basket.`);
   };
 
   const handleUpdateBasketQty = (productId, delta) => {
@@ -5519,135 +5527,597 @@ export default function App() {
 
 {/* Product Details now open in Full-Page Daraz View inside <main> */}
 
-      {/* SLIDE-OUT SHOPPING BASKET & CHECKOUT DRAWER (WITH COD / ESEWA / KHALTI) */}
-      {basketDrawerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end">
-          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col justify-between p-5 sm:p-6 overflow-y-auto">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="w-5 h-5 text-[#14532D]" />
-                  <h3 className="text-lg font-extrabold text-slate-900">
-                    Your Harvest Basket ({totalBasketItems})
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setBasketDrawerOpen(false)}
-                  className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      {/* DARAZ-STYLE SHOPPING BASKET, EXPRESS CHECKOUT & "JUST FOR YOU" PRODUCTS VIEW */}
+      {basketDrawerOpen && (() => {
+        // Enrich basket items with live dbProducts metadata (photo, actual_price, stock, origin)
+        const enrichedBasket = basket.map((item) => {
+          const liveProd =
+            (Array.isArray(dbProducts) ? dbProducts : []).find((p) => p.id === item.id) || item;
+          const unitPrice = Number(liveProd.price || item.price || 0);
+          const origUnit =
+            Number(liveProd.actual_price || item.actual_price || 0) > unitPrice
+              ? Number(liveProd.actual_price || item.actual_price)
+              : unitPrice;
+          return {
+            ...liveProd,
+            ...item,
+            price: unitPrice,
+            actual_price: origUnit > unitPrice ? origUnit : null,
+            origin_location: liveProd.origin_location || item.origin_location || "Nepal Farm",
+            category: getCanonicalProductCategory(liveProd),
+            stock_quantity: liveProd.stock_quantity ?? item.stock_quantity ?? 50,
+            lineTotal: unitPrice * item.qty,
+            lineOriginalTotal: origUnit * item.qty,
+            lineSavings: Math.max(0, (origUnit - unitPrice) * item.qty),
+          };
+        });
 
-              {basket.length === 0 ? (
-                <div className="py-16 text-center space-y-2 text-slate-400">
-                  <ShoppingBag className="w-10 h-10 mx-auto opacity-40" />
-                  <p className="text-sm font-semibold">Your basket is empty</p>
-                  <p className="text-xs">Tap "Add to Basket" on any harvest item to start.</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {basket.map((item) => (
-                    <div key={item.id} className="py-3.5 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-sm text-slate-900">{item.name}</p>
-                        <p className="text-xs text-slate-500">
-                          रु {item.price} / {item.unit}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleUpdateBasketQty(item.id, -1)}
-                          className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="text-xs font-extrabold w-6 text-center">{item.qty}</span>
-                        <button
-                          onClick={() => handleUpdateBasketQty(item.id, 1)}
-                          className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+        const basketOriginalSubtotal = enrichedBasket.reduce(
+          (sum, it) => sum + it.lineOriginalTotal,
+          0
+        );
+        const basketDiscountSavings = enrichedBasket.reduce(
+          (sum, it) => sum + it.lineSavings,
+          0
+        );
+
+        // Build Daraz-style "Just For You / Fresh Farm Recommendations" product list
+        const basketIds = new Set(basket.map((b) => b.id));
+        const recommendedProducts = (Array.isArray(dbProducts) ? dbProducts : [])
+          .filter((p) => {
+            if (basketRecCategory === "ALL") return true;
+            return getCanonicalProductCategory(p) === basketRecCategory;
+          })
+          .sort((a, b) => {
+            // Show in-stock items not yet in basket first so customers can easily discover & add more
+            const aInBasket = basketIds.has(a.id) ? 1 : 0;
+            const bInBasket = basketIds.has(b.id) ? 1 : 0;
+            if (aInBasket !== bInBasket) return aInBasket - bInBasket;
+            const aStock = Number(a.stock_quantity) > 0 ? 1 : 0;
+            const bStock = Number(b.stock_quantity) > 0 ? 1 : 0;
+            if (bStock !== aStock) return bStock - aStock;
+            return Number(b.id || 0) - Number(a.id || 0);
+          });
+
+        return (
+          <div className="fixed inset-0 z-50 bg-[#F4F6F3] overflow-y-auto animate-fadeIn">
+            {/* Sticky Daraz Basket Top Navigation Bar */}
+            <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-2xs">
+              <div className="max-w-7xl mx-auto px-3 sm:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setBasketDrawerOpen(false)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-[#14532D] font-extrabold text-xs transition cursor-pointer"
+                  >
+                    <span>← Continue Shopping</span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 rounded-xl bg-[#14532D] text-amber-400 flex items-center justify-center shadow-2xs">
+                      <ShoppingBag className="w-5 h-5" />
                     </div>
-                  ))}
+                    <div>
+                      <h2 className="text-base sm:text-xl font-black text-slate-900 leading-tight">
+                        My Harvest Basket ({totalBasketItems})
+                      </h2>
+                      <p className="text-[10px] sm:text-xs text-slate-500 font-medium hidden xs:block">
+                        Direct from Verified Nepali Farmers • Instant Checkout
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                <div className="flex items-center gap-2">
+                  {basket.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBasket([]);
+                        showToast("Cleared all items from your basket.");
+                      }}
+                      className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Clear Basket</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setBasketDrawerOpen(false)}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                    title="Close Basket"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {basket.length > 0 && (
-              <form
-                onSubmit={handleCheckoutBasket}
-                className="border-t border-slate-200 pt-4 space-y-3"
-              >
-                <div className="flex items-center justify-between text-base font-black text-slate-900">
-                  <span>Total Amount:</span>
-                  <span className="text-[#14532D]">रु {basketTotal}</span>
+            <div className="max-w-7xl mx-auto px-3 sm:px-8 py-5 sm:py-7 space-y-8 pb-20">
+              {/* TOP SECTION: CART ITEMS + ORDER SUMMARY & CHECKOUT */}
+              {enrichedBasket.length === 0 ? (
+                <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200/90 shadow-2xs max-w-2xl mx-auto space-y-4">
+                  <div className="w-20 h-20 rounded-3xl bg-emerald-50 border border-emerald-200 text-[#14532D] flex items-center justify-center mx-auto shadow-xs">
+                    <ShoppingBag className="w-10 h-10" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-xl sm:text-2xl font-black text-slate-900">
+                      Your Harvest Basket is Empty
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
+                      Add fresh seasonal vegetables, Mustang apples, Jumla Marsi rice, or wild honey from the{" "}
+                      <strong className="text-[#14532D]">Just For You</strong> products below!
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setBasketDrawerOpen(false)}
+                      className="px-5 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs sm:text-sm font-extrabold shadow-sm transition cursor-pointer"
+                    >
+                      🌱 Explore Full Marketplace
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Contact Phone Number *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. 9841234567"
-                    value={checkoutPhone}
-                    onChange={(e) => setCheckoutPhone(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Delivery Address / Location *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Ward 4, Dhangadhi or Kathmandu"
-                    value={checkoutAddress}
-                    onChange={(e) => setCheckoutAddress(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Payment Method *
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { id: "COD", label: "💵 Cash on Delivery" },
-                      { id: "ESEWA", label: "🟢 eSewa Wallet" },
-                      { id: "KHALTI", label: "🟣 Khalti Wallet" },
-                    ].map((pm) => (
+              ) : (
+                <div className="grid lg:grid-cols-12 gap-6 items-start">
+                  {/* LEFT 8 COLUMNS: DARAZ STORE PACKAGE & BASKET ITEM CARDS */}
+                  <div className="lg:col-span-8 space-y-3.5">
+                    {/* Daraz Store Package Header */}
+                    <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200/90 shadow-2xs flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="px-2.5 py-1 rounded-lg bg-[#14532D] text-amber-300 text-[10px] font-black uppercase tracking-wider">
+                          ✓ Verified Mall
+                        </span>
+                        <div>
+                          <p className="text-xs sm:text-sm font-extrabold text-slate-900">
+                            KrishiMart Nepal Official Farm Hub
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            {enrichedBasket.length} {enrichedBasket.length === 1 ? "Product" : "Products"} ({totalBasketItems} total units) • Direct Farmer Dispatch
+                          </p>
+                        </div>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-[11px] font-extrabold">
+                        🚚 Free Hub Handling
+                      </span>
+                    </div>
+
+                    {/* Individual Basket Item Cards */}
+                    <div className="space-y-3">
+                      {enrichedBasket.map((item) => {
+                        const imgUrl = getProductImage(item);
+                        const hasDiscount =
+                          item.actual_price && Number(item.actual_price) > Number(item.price);
+                        const discPct = hasDiscount
+                          ? Math.round(
+                              ((Number(item.actual_price) - Number(item.price)) /
+                                Number(item.actual_price)) *
+                                100
+                            )
+                          : 0;
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="bg-white rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 border border-slate-200/90 shadow-2xs hover:border-emerald-300 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                          >
+                            <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                              {/* Clickable Product Image */}
+                              <div
+                                onClick={() => {
+                                  setQuickViewProduct(item);
+                                  setQuickViewQty(item.qty || 1);
+                                  setBasketDrawerOpen(false);
+                                }}
+                                className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/80 shrink-0 cursor-pointer group"
+                              >
+                                <img
+                                  src={imgUrl}
+                                  alt={item.name}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = getFallbackProductImage(item);
+                                  }}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                                />
+                                {hasDiscount && (
+                                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black shadow-2xs">
+                                    -{discPct}%
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Item Metadata & Pricing */}
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-[#14532D] text-[10px] font-extrabold">
+                                    📍 {item.origin_location}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
+                                    {item.category}
+                                  </span>
+                                </div>
+
+                                <h4
+                                  onClick={() => {
+                                    setQuickViewProduct(item);
+                                    setQuickViewQty(item.qty || 1);
+                                    setBasketDrawerOpen(false);
+                                  }}
+                                  className="font-extrabold text-sm sm:text-base text-slate-900 hover:text-[#14532D] truncate cursor-pointer"
+                                >
+                                  {item.name}
+                                </h4>
+
+                                <div className="flex flex-wrap items-baseline gap-2">
+                                  <span className="text-sm sm:text-base font-black text-[#14532D]">
+                                    रु {item.price}
+                                  </span>
+                                  <span className="text-xs text-slate-500">/ {item.unit}</span>
+                                  {hasDiscount && (
+                                    <>
+                                      <span className="text-xs text-slate-400 line-through font-semibold">
+                                        रु {item.actual_price}
+                                      </span>
+                                      <span className="text-[10px] font-extrabold text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded">
+                                        Save रु {(item.actual_price - item.price).toFixed(0)}/{item.unit}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+
+                                <p className="text-[11px] text-slate-400">
+                                  Available Stock: <strong className="text-slate-600">{item.stock_quantity} {item.unit}</strong>
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Right Side: Quantity Stepper, Quick Add Presets, Line Total & Remove */}
+                            <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100 shrink-0">
+                              <div className="text-left sm:text-right">
+                                <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                                  Item Subtotal
+                                </span>
+                                <span className="text-base sm:text-lg font-black text-slate-900">
+                                  रु {item.lineTotal.toLocaleString()}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center bg-slate-100 border border-slate-200 rounded-xl p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateBasketQty(item.id, -1)}
+                                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center shadow-2xs transition cursor-pointer"
+                                    title="Decrease quantity"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="px-2.5 sm:px-3 text-xs sm:text-sm font-black text-slate-900 min-w-[44px] text-center">
+                                    {item.qty} {item.unit}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateBasketQty(item.id, 1)}
+                                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#14532D] hover:bg-[#1B4332] text-white flex items-center justify-center shadow-2xs transition cursor-pointer"
+                                    title="Increase quantity"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFromBasket(item.id, item.name)}
+                                  className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition cursor-pointer"
+                                  title="Remove item from basket"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* RIGHT 4 COLUMNS: STICKY DARAZ ORDER SUMMARY & EXPRESS CHECKOUT */}
+                  <div className="lg:col-span-4 lg:sticky lg:top-20 bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-md space-y-4">
+                    <div className="pb-3 border-b border-slate-100 flex items-center justify-between">
+                      <h3 className="text-base sm:text-lg font-black text-slate-900">
+                        Order Summary
+                      </h3>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#14532D] text-[11px] font-extrabold">
+                        {totalBasketItems} {totalBasketItems === 1 ? "Unit" : "Units"}
+                      </span>
+                    </div>
+
+                    {/* Bill Breakdown */}
+                    <div className="space-y-2 text-xs sm:text-sm">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Original MRP Total</span>
+                        <span className="font-bold text-slate-800">
+                          रु {basketOriginalSubtotal.toLocaleString()}
+                        </span>
+                      </div>
+                      {basketDiscountSavings > 0 && (
+                        <div className="flex items-center justify-between text-emerald-700 font-bold">
+                          <span>Farm Direct Discount</span>
+                          <span>- रु {basketDiscountSavings.toLocaleString()}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Hub Packaging & Handling</span>
+                        <span className="text-emerald-700 font-extrabold">FREE</span>
+                      </div>
+                      <div className="pt-2.5 border-t border-slate-200 flex items-baseline justify-between">
+                        <span className="text-sm font-extrabold text-slate-900">
+                          Total Payable
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black text-[#14532D]">
+                          रु {basketTotal.toLocaleString()}
+                        </span>
+                      </div>
+                      {basketDiscountSavings > 0 && (
+                        <div className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-[#14532D] text-xs font-extrabold text-center">
+                          🎉 You are saving रु {basketDiscountSavings.toLocaleString()} on this order!
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Checkout Delivery & Payment Form */}
+                    <form onSubmit={handleCheckoutBasket} className="pt-2 border-t border-slate-100 space-y-3.5">
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                          📞 Contact Phone Number *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. 9841234567"
+                          value={checkoutPhone}
+                          onChange={(e) => setCheckoutPhone(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50/60 focus:bg-white focus:border-[#14532D] text-xs font-medium outline-none transition"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                          📍 Delivery Address / Location *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Ward 4, Dhangadhi or Baneshwor, Kathmandu"
+                          value={checkoutAddress}
+                          onChange={(e) => setCheckoutAddress(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50/60 focus:bg-white focus:border-[#14532D] text-xs font-medium outline-none transition"
+                        />
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {["Dhangadhi Hub", "Kathmandu", "Pokhara", "Chitwan"].map((loc) => (
+                            <button
+                              key={loc}
+                              type="button"
+                              onClick={() => setCheckoutAddress(loc)}
+                              className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-[#14532D] text-[10px] font-bold transition cursor-pointer"
+                            >
+                              + {loc}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                          💳 Select Payment Method *
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { id: "COD", label: "💵 Cash on Delivery" },
+                            { id: "ESEWA", label: "🟢 eSewa Wallet" },
+                            { id: "KHALTI", label: "🟣 Khalti Wallet" },
+                          ].map((pm) => (
+                            <button
+                              key={pm.id}
+                              type="button"
+                              onClick={() => setPaymentMethod(pm.id)}
+                              className={`py-2.5 px-2 rounded-xl border text-[11px] font-extrabold transition cursor-pointer ${
+                                paymentMethod === pm.id
+                                  ? "border-[#14532D] bg-emerald-50 text-[#14532D] ring-2 ring-emerald-500/20"
+                                  : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {pm.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       <button
-                        key={pm.id}
+                        type="submit"
+                        disabled={checkingOut}
+                        className="w-full py-3.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:opacity-60 text-white font-black text-xs sm:text-sm shadow-lg transition cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <ShoppingBag className="w-4 h-4 text-amber-400" />
+                        <span>
+                          {checkingOut
+                            ? "Placing Your Order..."
+                            : `Confirm Order • रु ${basketTotal.toLocaleString()}`}
+                        </span>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* BOTTOM SECTION (DARAZ-STYLE "JUST FOR YOU" RECOMMENDED PRODUCTS LIST INSIDE BASKET) */}
+              <div className="pt-4 border-t border-slate-200/90 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-black uppercase tracking-wider">
+                      🔥 Daraz-Style Picks
+                    </div>
+                    <h3 className="text-lg sm:text-2xl font-black text-slate-900 mt-0.5">
+                      Just For You • Fresh Farm Harvests
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Tap <strong>+ Add to Basket</strong> on any item below to include it in your current order
+                    </p>
+                  </div>
+
+                  {/* Category Filter Pills Inside Basket Recommendations */}
+                  <div className="flex overflow-x-auto max-w-full gap-1 bg-white p-1 rounded-xl border border-slate-200/80 no-scrollbar">
+                    {[
+                      { id: "ALL", label: "All Picks" },
+                      { id: "VEGETABLES", label: "🥬 Veg" },
+                      { id: "FRUITS", label: "🍎 Fruits" },
+                      { id: "GRAINS", label: "🌾 Grains" },
+                      { id: "SPICES", label: "🌶️ Spices" },
+                      { id: "DAIRY", label: "🍯 Dairy" },
+                    ].map((cat) => (
+                      <button
+                        key={cat.id}
                         type="button"
-                        onClick={() => setPaymentMethod(pm.id)}
-                        className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
-                          paymentMethod === pm.id
-                            ? "border-[#14532D] bg-emerald-50 text-[#14532D]"
-                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        onClick={() => setBasketRecCategory(cat.id)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-extrabold whitespace-nowrap transition cursor-pointer ${
+                          basketRecCategory === cat.id
+                            ? "bg-[#14532D] text-white shadow-2xs"
+                            : "text-slate-600 hover:bg-slate-100"
                         }`}
                       >
-                        {pm.label}
+                        {cat.label}
                       </button>
                     ))}
                   </div>
                 </div>
-                <button
-                  type="submit"
-                  disabled={checkingOut}
-                  className="w-full py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs shadow-md transition cursor-pointer"
-                >
-                  {checkingOut ? "Placing Order..." : `Confirm Order (रु ${basketTotal})`}
-                </button>
-              </form>
-            )}
+
+                {/* Daraz 2-Column Mobile / 4-Column Desktop Product Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                  {recommendedProducts.slice(0, 12).map((p) => {
+                    const imgUrl = getProductImage(p);
+                    const stockNum = Number(p.stock_quantity || 0);
+                    const inCartItem = basket.find((item) => item.id === p.id);
+                    const qtyInBasket = inCartItem ? inCartItem.qty : 0;
+                    const hasDisc = Number(p.actual_price) > Number(p.price);
+                    const discPct = hasDisc
+                      ? p.discount_pct ||
+                        Math.round(
+                          ((Number(p.actual_price) - Number(p.price)) / Number(p.actual_price)) *
+                            100
+                        )
+                      : 0;
+
+                    return (
+                      <div
+                        key={p.id}
+                        className="bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200/90 shadow-2xs hover:shadow-md transition flex flex-col justify-between group"
+                      >
+                        <div>
+                          <div
+                            onClick={() => {
+                              setQuickViewProduct(p);
+                              setQuickViewQty(1);
+                              setBasketDrawerOpen(false);
+                            }}
+                            className="relative h-32 sm:h-40 rounded-xl overflow-hidden bg-slate-100 mb-2.5 cursor-pointer"
+                          >
+                            <img
+                              src={imgUrl}
+                              alt={p.name}
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src = getFallbackProductImage(p);
+                              }}
+                              className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                            />
+                            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-white/95 text-slate-800 text-[9px] font-bold shadow-2xs truncate max-w-[75%]">
+                              📍 {p.origin_location || "Nepal Farm"}
+                            </span>
+                            {hasDisc && (
+                              <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black shadow-2xs">
+                                -{discPct}%
+                              </span>
+                            )}
+                            {qtyInBasket > 0 && (
+                              <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-[#14532D] text-amber-300 text-[9px] font-black shadow-2xs">
+                                ✓ {qtyInBasket} {p.unit} in Basket
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="px-0.5 space-y-1">
+                            <h4
+                              onClick={() => {
+                                setQuickViewProduct(p);
+                                setQuickViewQty(1);
+                                setBasketDrawerOpen(false);
+                              }}
+                              className="font-extrabold text-xs sm:text-sm text-slate-900 group-hover:text-[#14532D] line-clamp-1 cursor-pointer"
+                            >
+                              {p.name}
+                            </h4>
+                            <p className="text-[10px] text-slate-500 line-clamp-1">
+                              {p.description}
+                            </p>
+                            <div className="pt-0.5 flex items-baseline gap-1.5">
+                              <span className="text-sm sm:text-base font-black text-[#14532D]">
+                                रु {p.price}
+                              </span>
+                              <span className="text-[10px] text-slate-500">/{p.unit}</span>
+                              {hasDisc && (
+                                <span className="text-[10px] text-slate-400 line-through font-semibold">
+                                  रु {p.actual_price}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-100">
+                          {qtyInBasket > 0 ? (
+                            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-300 rounded-xl p-1">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateBasketQty(p.id, -1)}
+                                className="w-7 h-7 rounded-lg bg-white hover:bg-slate-100 text-slate-800 font-black text-xs flex items-center justify-center shadow-2xs cursor-pointer"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <span className="text-[11px] font-black text-[#14532D]">
+                                {qtyInBasket} {p.unit}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleAddToBasket(p, 1, false)}
+                                className="w-7 h-7 rounded-lg bg-[#14532D] hover:bg-[#1B4332] text-white font-black text-xs flex items-center justify-center shadow-2xs cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={stockNum <= 0}
+                              onClick={() => handleAddToBasket(p, 1, false)}
+                              className="w-full py-2 px-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:bg-slate-200 text-white disabled:text-slate-400 text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-amber-400" />
+                              <span>{stockNum > 0 ? "Add to Basket" : "Sold Out"}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* AUTH POPUP MODAL FOR VISITORS */}
       {authModalOpen && (
@@ -6462,8 +6932,8 @@ export default function App() {
             </li>
 
             <li>
-              ✉️ <a href="mailto:support.krishimart@tgmail.com" className="hover:text-green-600 transition-colors">
-                support.krishimart@tgmail.com
+              ✉️ <a href="mailto:support@krishimart.com.np" className="hover:text-green-600 transition-colors">
+                support@krishimart.com.np
               </a>
             </li>
               <li>🕒 6:00 AM – 10:00 PM NPT Daily</li>
