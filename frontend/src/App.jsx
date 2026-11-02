@@ -38,69 +38,196 @@ import AdminPanel from "./components/AdminPanel";
 const CATEGORIES_SHOWCASE = [
   {
     id: "VEGETABLES",
+    icon: "🥬",
+    shortLabel: "Vegetables",
     title: "Fresh Vegetables",
-    subtitle: "Leafy greens, roots, gourds",
-    badge: "140+ Items",
+    subtitle: "Tomatoes, potatoes, leafy greens",
     image:
       "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80",
   },
   {
     id: "FRUITS",
+    icon: "🍎",
+    shortLabel: "Fruits",
     title: "Hill & Mountain Fruits",
-    subtitle: "Marpha apples, citrus, kiwi",
-    badge: "Seasonal Pick",
+    subtitle: "Mustang apples, citrus, banana",
     image:
       "https://images.unsplash.com/photo-1619566636858-adf3ef46400b?auto=format&fit=crop&w=600&q=80",
   },
   {
     id: "GRAINS",
-    title: "Grains & Cereals",
-    subtitle: "Marsi, Basmati, Millet, Barley",
-    badge: "Indigenous",
+    icon: "🌾",
+    shortLabel: "Grains & Pulses",
+    title: "Grains, Rice & Pulses",
+    subtitle: "Jumla Marsi, Basmati, Mustang dal",
     image:
       "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=600&q=80",
   },
   {
-    id: "GRAINS",
-    title: "Pulses & Legumes",
-    subtitle: "Mustang dal, black beans, peas",
-    badge: "High Protein",
-    image:
-      "https://images.unsplash.com/photo-1515543904379-3d757afe72e4?auto=format&fit=crop&w=600&q=80",
-  },
-  {
     id: "SPICES",
+    icon: "🌶️",
+    shortLabel: "Spices & Herbs",
     title: "Spices & Aromatics",
-    subtitle: "Timur, Ilam cardamom, ginger",
-    badge: "Export Grade",
+    subtitle: "Akabare chili, Timur, ginger, garlic",
     image:
       "https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=600&q=80",
   },
   {
-    id: "VEGETABLES",
-    title: "Seeds & Seedlings",
-    subtitle: "Heirloom seeds, bio-saplings",
-    badge: "Germination 95%",
-    image:
-      "https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=600&q=80",
-  },
-  {
-    id: "VEGETABLES",
-    title: "100% Organic Produce",
-    subtitle: "Zero chemical pesticide guaranteed",
-    badge: "Lab Certified",
-    image:
-      "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80",
-  },
-  {
     id: "DAIRY",
-    title: "Dairy & Forest Honey",
-    subtitle: "Pure Forest Honey, Ghee, Mustard Oil",
-    badge: "Pure Himalayan",
+    icon: "🍯",
+    shortLabel: "Dairy & Honey",
+    title: "Dairy, Oils & Honey",
+    subtitle: "Wild honey, pure ghee, mustard oil",
     image:
       "https://images.unsplash.com/photo-1587049352847-4a222e784d38?auto=format&fit=crop&w=600&q=80",
   },
 ];
+
+// Bilingual (English + Romanized Nepali + Devanagari) Agricultural Synonym Groups for High-Accuracy Search
+const AGRI_SYNONYM_GROUPS = [
+  ["tomato", "tomatoes", "golbheda", "tamatar", "टमाटर", "गोलभेडा"],
+  ["potato", "potatoes", "aalu", "alu", "आलु"],
+  ["apple", "apples", "syau", "marpha", "स्याउ"],
+  ["rice", "chamal", "marsi", "dhan", "basmati", "चामल", "मार्सी", "धान"],
+  ["chili", "chilli", "chilies", "chillies", "khursani", "akabare", "dalle", "खुर्सानी", "अकबरे"],
+  ["onion", "onions", "pyaj", "प्याज"],
+  ["garlic", "lasun", "लसुन"],
+  ["ginger", "aduwa", "अदुवा"],
+  ["cauliflower", "kauli", "काउली"],
+  ["cabbage", "banda", "बन्दा"],
+  ["spinach", "saag", "rayo", "palungo", "greens", "leafy", "साग", "रायो", "पालुङ्गो"],
+  ["honey", "maha", "bee", "मह"],
+  ["oil", "mustard", "tori", "tel", "तोरी", "तेल"],
+  ["ghee", "ghiu", "dairy", "milk", "dudh", "curd", "dahi", "paneer", "घिउ", "दूध", "दही"],
+  ["bean", "beans", "dal", "daal", "lentil", "lentils", "pulse", "pulses", "simi", "gedagudi", "दाल", "सिमी"],
+  ["cucumber", "kankro", "काँक्रो"],
+  ["pumpkin", "farsi", "फर्सी"],
+  ["radish", "mula", "मूला"],
+  ["carrot", "carrots", "gajar", "गाजर"],
+  ["banana", "bananas", "kera", "केरा"],
+  ["orange", "oranges", "suntala", "citrus", "सुन्तला"],
+  ["lemon", "kagati", "lime", "कागती"],
+  ["cardamom", "alainchi", "elaichi", "अलैंची"],
+  ["turmeric", "besar", "besaar", "बेसार"],
+  ["timur", "sichuan", "pepper", "टिमुर"],
+  ["vegetable", "vegetables", "veg", "tarkari", "तरकारी"],
+  ["fruit", "fruits", "falful", "फलफूल"],
+  ["grain", "grains", "cereal", "cereals", "khadya", "खाद्यान्न"],
+  ["spice", "spices", "masala", "herb", "herbs", "मसला"],
+];
+
+function stemAgriWord(word) {
+  const w = (word || "").toLowerCase().trim();
+  if (w.length <= 3) return w;
+  if (w.endsWith("atoes")) return w.slice(0, -2); // tomatoes -> tomato, potatoes -> potato
+  if (w.endsWith("ies") && w.length > 4) return w.slice(0, -3) + "y"; // berries -> berry, chilies -> chily
+  if (w.endsWith("es") && (w.endsWith("ches") || w.endsWith("shes") || w.endsWith("xes"))) {
+    return w.slice(0, -2);
+  }
+  if (w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
+function expandSearchToken(token) {
+  const clean = (token || "").toLowerCase().trim();
+  const stemmed = stemAgriWord(clean);
+  const terms = new Set([clean, stemmed]);
+  for (const grp of AGRI_SYNONYM_GROUPS) {
+    if (grp.some((g) => g === clean || g === stemmed || (clean.length >= 4 && g.includes(clean)))) {
+      grp.forEach((g) => {
+        terms.add(g);
+        terms.add(stemAgriWord(g));
+      });
+    }
+  }
+  return Array.from(terms).filter(Boolean);
+}
+
+function getCanonicalProductCategory(product) {
+  const rawCat = (product?.category || "").toUpperCase().trim();
+  if (["VEGETABLES", "FRUITS", "GRAINS", "SPICES", "DAIRY"].includes(rawCat)) {
+    return rawCat;
+  }
+  const text = `${rawCat} ${product?.name || ""}`.toLowerCase();
+  if (text.includes("fruit") || text.includes("apple") || text.includes("banana") || text.includes("orange"))
+    return "FRUITS";
+  if (text.includes("grain") || text.includes("rice") || text.includes("marsi") || text.includes("dal") || text.includes("pulse") || text.includes("bean"))
+    return "GRAINS";
+  if (text.includes("spice") || text.includes("chili") || text.includes("khursani") || text.includes("timur") || text.includes("ginger") || text.includes("garlic") || text.includes("turmeric"))
+    return "SPICES";
+  if (text.includes("dairy") || text.includes("honey") || text.includes("oil") || text.includes("ghee") || text.includes("milk"))
+    return "DAIRY";
+  return "VEGETABLES";
+}
+
+function computeProductSearchRelevance(product, rawQuery) {
+  const q = (rawQuery || "").toLowerCase().trim();
+  if (!q) return 1; // Neutral positive score when no search query is entered
+
+  const name = (product?.name || "").toLowerCase();
+  const desc = (product?.description || "").toLowerCase();
+  const origin = (product?.origin_location || "").toLowerCase();
+  const cat = getCanonicalProductCategory(product).toLowerCase();
+  const fullCatText = `${cat} ${(product?.category || "").toLowerCase()}`;
+
+  // 1. Direct full-phrase match bonus
+  let totalScore = 0;
+  if (name === q) totalScore += 150;
+  else if (name.startsWith(q)) totalScore += 110;
+  else if (name.includes(q)) totalScore += 85;
+  if (origin.includes(q)) totalScore += 55;
+  if (fullCatText.includes(q)) totalScore += 45;
+  if (desc.includes(q)) totalScore += 25;
+
+  // 2. Tokenized & synonym-aware matching
+  const rawTokens = q
+    .split(/[\s,.-]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (rawTokens.length === 0) return 1;
+
+  const fillerModifiers = new Set(["fresh", "organic", "local", "pure", "natural", "nepali", "farm", "raw", "best"]);
+  const coreTokens = rawTokens.filter((t) => !fillerModifiers.has(t));
+  const tokensToEvaluate = coreTokens.length > 0 ? coreTokens : rawTokens;
+
+  let matchedCoreTokens = 0;
+  for (const tok of tokensToEvaluate) {
+    const synonyms = expandSearchToken(tok);
+    let tokenScore = 0;
+    for (const syn of synonyms) {
+      if (!syn) continue;
+      if (name === syn || name.startsWith(syn + " ") || name.endsWith(" " + syn)) {
+        tokenScore = Math.max(tokenScore, 80);
+      } else if (name.includes(syn)) {
+        tokenScore = Math.max(tokenScore, 65);
+      } else if (origin.includes(syn)) {
+        tokenScore = Math.max(tokenScore, 45);
+      } else if (fullCatText.includes(syn)) {
+        tokenScore = Math.max(tokenScore, 40);
+      } else if (desc.includes(syn)) {
+        tokenScore = Math.max(tokenScore, 20);
+      }
+    }
+    if (tokenScore > 0) {
+      matchedCoreTokens += 1;
+      totalScore += tokenScore;
+    }
+  }
+
+  // Require all core search tokens to match at least one field/synonym for high precision
+  if (matchedCoreTokens < tokensToEvaluate.length && totalScore < 85) {
+    return 0;
+  }
+
+  // Bonus if modifier words (like "organic", "local", "mustang") also match
+  for (const mod of rawTokens.filter((t) => fillerModifiers.has(t))) {
+    if (name.includes(mod) || desc.includes(mod)) {
+      totalScore += 15;
+    }
+  }
+
+  return totalScore;
+}
 
 function resolveMediaUrl(rawUrl, userId = null) {
   if (userId) {
@@ -1178,26 +1305,79 @@ export default function App() {
     );
   }
 
-  const filteredProducts = dbProducts
-    .filter((p) => {
-      const matchesCat = selectedCategory === "ALL" || p.category === selectedCategory;
+  // Dynamically extract real distinct farm origins from dbProducts for 100% accurate Origin filtering
+  const availableOrigins = Array.from(
+    new Set(
+      (Array.isArray(dbProducts) ? dbProducts : [])
+        .map((p) => (p.origin_location || "").split(",")[0].trim())
+        .filter((loc) => loc.length >= 2)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Category batch counts (respecting current search/origin/stock filters for accurate counts)
+  const categoryBatchCounts = (Array.isArray(dbProducts) ? dbProducts : []).reduce(
+    (acc, p) => {
+      const c = getCanonicalProductCategory(p);
+      acc[c] = (acc[c] || 0) + 1;
+      acc.ALL = (acc.ALL || 0) + 1;
+      return acc;
+    },
+    { ALL: 0, VEGETABLES: 0, FRUITS: 0, GRAINS: 0, SPICES: 0, DAIRY: 0 }
+  );
+
+  const hasActiveFilters =
+    Boolean(searchQuery.trim()) ||
+    selectedCategory !== "ALL" ||
+    selectedDistrict !== "ALL" ||
+    inStockOnly ||
+    sortBy !== "FEATURED";
+
+  const filteredProducts = (Array.isArray(dbProducts) ? dbProducts : [])
+    .map((p) => ({
+      product: p,
+      relevance: computeProductSearchRelevance(p, searchQuery),
+    }))
+    .filter(({ product: p, relevance }) => {
+      const prodCat = getCanonicalProductCategory(p);
+      const matchesCat = selectedCategory === "ALL" || prodCat === selectedCategory;
       const matchesDistrict =
         selectedDistrict === "ALL" ||
         (p.origin_location &&
           p.origin_location.toLowerCase().includes(selectedDistrict.toLowerCase()));
-      const matchesSearch =
-        (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.description || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.origin_location && p.origin_location.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesSearch = !searchQuery.trim() || relevance > 0;
       const matchesStock = !inStockOnly || Number(p.stock_quantity) > 0;
       return matchesCat && matchesDistrict && matchesSearch && matchesStock;
     })
     .sort((a, b) => {
-      if (sortBy === "PRICE_ASC") return Number(a.price) - Number(b.price);
-      if (sortBy === "PRICE_DESC") return Number(b.price) - Number(a.price);
-      if (sortBy === "STOCK_DESC") return Number(b.stock_quantity) - Number(a.stock_quantity);
-      return 0;
-    });
+      if (sortBy === "PRICE_ASC") return Number(a.product.price) - Number(b.product.price);
+      if (sortBy === "PRICE_DESC") return Number(b.product.price) - Number(a.product.price);
+      if (sortBy === "STOCK_DESC")
+        return Number(b.product.stock_quantity) - Number(a.product.stock_quantity);
+      if (sortBy === "DISCOUNT_DESC") {
+        const discA =
+          Number(a.product.actual_price) > Number(a.product.price)
+            ? ((Number(a.product.actual_price) - Number(a.product.price)) /
+                Number(a.product.actual_price)) *
+              100
+            : 0;
+        const discB =
+          Number(b.product.actual_price) > Number(b.product.price)
+            ? ((Number(b.product.actual_price) - Number(b.product.price)) /
+                Number(b.product.actual_price)) *
+              100
+            : 0;
+        return discB - discA;
+      }
+      // Default ("FEATURED" / Best Match): sort by search relevance first, then in-stock status
+      if (searchQuery.trim() && b.relevance !== a.relevance) {
+        return b.relevance - a.relevance;
+      }
+      const inStockA = Number(a.product.stock_quantity) > 0 ? 1 : 0;
+      const inStockB = Number(b.product.stock_quantity) > 0 ? 1 : 0;
+      if (inStockB !== inStockA) return inStockB - inStockA;
+      return Number(b.product.id || 0) - Number(a.product.id || 0);
+    })
+    .map(({ product }) => product);
 
   const basketTotal = basket.reduce((sum, item) => sum + Number(item.price) * item.qty, 0);
   const totalBasketItems = basket.reduce((sum, item) => sum + item.qty, 0);
@@ -1297,14 +1477,29 @@ export default function App() {
             </div>
           </div>
 
-          {/* Desktop Search Bar */}
+          {/* Desktop Search Bar (Synced with Category & Live Relevance Search) */}
           <div className="hidden lg:flex items-center flex-1 max-w-xl bg-slate-100/90 border border-slate-200 rounded-full px-2 py-1 focus-within:border-[#14532D] focus-within:bg-white transition">
-            <span className="px-3 py-1 text-xs font-bold text-slate-600 border-r border-slate-200">
-              All ▾
-            </span>
+            <select
+              value={selectedCategory}
+              onChange={(e) => {
+                setSelectedCategory(e.target.value);
+                if (activeTab !== "home" && activeTab !== "marketplace") {
+                  setActiveTab("home");
+                }
+              }}
+              className="px-2.5 py-1 text-xs font-bold text-slate-700 bg-transparent border-r border-slate-200 outline-none cursor-pointer"
+              title="Filter by produce category"
+            >
+              <option value="ALL">All ({categoryBatchCounts.ALL})</option>
+              <option value="VEGETABLES">🥬 Vegetables ({categoryBatchCounts.VEGETABLES})</option>
+              <option value="FRUITS">🍎 Fruits ({categoryBatchCounts.FRUITS})</option>
+              <option value="GRAINS">🌾 Grains ({categoryBatchCounts.GRAINS})</option>
+              <option value="SPICES">🌶️ Spices ({categoryBatchCounts.SPICES})</option>
+              <option value="DAIRY">🍯 Dairy/Honey ({categoryBatchCounts.DAIRY})</option>
+            </select>
             <input
               type="text"
-              placeholder="Search organic spinach, Mustang apples, Jumla Marsi rice..."
+              placeholder="Search crops, Nepali names (aalu, syau, marsi), or farm origin..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
@@ -1312,16 +1507,38 @@ export default function App() {
                   setActiveTab("home");
                 }
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setQuickViewProduct(null);
+                  setActiveTab("home");
+                  document
+                    .getElementById("fresh-harvests")
+                    ?.scrollIntoView({ behavior: "smooth" });
+                }
+              }}
               className="flex-1 px-3 py-1.5 text-xs bg-transparent outline-none text-slate-800"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="px-2 text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
             <button
+              type="button"
               onClick={() => {
+                setQuickViewProduct(null);
                 setActiveTab("home");
                 document
                   .getElementById("fresh-harvests")
                   ?.scrollIntoView({ behavior: "smooth" });
               }}
-              className="w-8 h-8 rounded-full bg-[#14532D] text-white flex items-center justify-center hover:bg-[#1B4332] cursor-pointer"
+              className="w-8 h-8 rounded-full bg-[#14532D] text-white flex items-center justify-center hover:bg-[#1B4332] cursor-pointer shrink-0"
+              title="Search harvest batches"
             >
               <Search className="w-4 h-4" />
             </button>
@@ -4357,220 +4574,320 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 5. FLOATING MULTI-FILTER SEARCH BAR & TRENDING PILLS */}
-                <div className="max-w-7xl mx-auto mt-8 sm:mt-10 bg-white rounded-3xl p-4 sm:p-5 shadow-md border border-slate-200/80 space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-2.5 sm:gap-3">
-                    <div className="sm:col-span-2 md:col-span-5 relative">
-                      <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                      <input
-                        type="text"
-                        placeholder="Search 'Fresh Tomatoes', 'Mustang Apples', 'Jumla Beans'..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs outline-none focus:bg-white focus:border-[#14532D]"
-                      />
-                    </div>
-                    <div className="md:col-span-3">
-                      <select
-                        value={selectedCategory}
-                        onChange={(e) => setSelectedCategory(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700"
-                      >
-                        <option value="ALL">🌱 All Produce Categories</option>
-                        <option value="VEGETABLES">Fresh Vegetables</option>
-                        <option value="FRUITS">Fruits</option>
-                        <option value="GRAINS">Grains & Cereals</option>
-                        <option value="SPICES">Spices & Aromatics</option>
-                        <option value="DAIRY">Dairy & Oils</option>
-                      </select>
-                    </div>
-                    <div className="md:col-span-2">
-                      <select
-                        value={selectedDistrict}
-                        onChange={(e) => setSelectedDistrict(e.target.value)}
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700"
-                      >
-                        <option value="ALL">📍 All Districts</option>
-                        <option value="Kavre">Kavre</option>
-                        <option value="Mustang">Mustang</option>
-                        <option value="Palpa">Palpa</option>
-                        <option value="Jumla">Jumla</option>
-                        <option value="Ilam">Ilam</option>
-                        <option value="Chitwan">Chitwan</option>
-                        <option value="Dhangadhi">Dhangadhi / Kailali</option>
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2 md:col-span-2">
-                      <a
-                        href="#fresh-harvests"
-                        className="w-full h-full py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white font-bold text-xs flex items-center justify-center gap-1.5"
-                      >
-                        Find Harvest
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Trending Pills */}
-                  <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
-                    <span className="text-slate-400 font-semibold">Trending:</span>
-                    {[
-                      { label: "🍅 Organic Tomatoes", term: "Tomato" },
-                      { label: "🍎 Mustang Marpha Apples", term: "Apple" },
-                      { label: "🥔 Palpa Red Potatoes", term: "Potato" },
-                      { label: "🌾 Jumla Marsi Rice", term: "Marsi" },
-                      { label: "🌶️ Ilam Akabare Chili", term: "Chili" },
-                    ].map((t) => (
-                      <button
-                        key={t.term}
-                        onClick={() => setSearchQuery(t.term)}
-                        className="px-3 py-1 rounded-full bg-slate-100 hover:bg-emerald-50 text-slate-700 text-[11px] font-medium transition cursor-pointer"
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                    {(searchQuery ||
-                      selectedCategory !== "ALL" ||
-                      selectedDistrict !== "ALL") && (
-                      <button
-                        onClick={() => {
-                          setSearchQuery("");
-                          setSelectedCategory("ALL");
-                          setSelectedDistrict("ALL");
-                        }}
-                        className="text-xs text-red-600 font-bold ml-2 cursor-pointer"
-                      >
-                        Reset Filters ✕
-                      </button>
-                    )}
-                  </div>
-                </div>
               </section>
             )}
 
-            {/* 6. EXPLORE BY CATEGORY */}
-            {activeTab !== "stories" && (
-              <section className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-5">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-700">
-                      OUR HARVEST RANGE
+            {/* 5. COMPACT 5-CATEGORY VISUAL STRIP (SYNCED WITH MARKETPLACE FILTER) */}
+            {activeTab === "home" && (
+              <section className="max-w-7xl mx-auto px-3 sm:px-8 pt-6 pb-2 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800">
+                      🌱 Browse by Category
                     </span>
-                    <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-0.5">
-                      Explore by Category
-                    </h2>
+                    <span className="text-xs text-slate-400 hidden sm:inline">
+                      • Click any category to filter batches below
+                    </span>
                   </div>
-                  <button
-                    onClick={() => setSelectedCategory("ALL")}
-                    className="text-xs font-bold text-[#14532D] hover:underline cursor-pointer"
-                  >
-                    View All →
-                  </button>
+                  {selectedCategory !== "ALL" && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory("ALL")}
+                      className="text-xs font-extrabold text-[#14532D] hover:underline cursor-pointer"
+                    >
+                      Show All ({categoryBatchCounts.ALL}) →
+                    </button>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-5">
-                  {CATEGORIES_SHOWCASE.map((cat, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        setSelectedCategory(cat.id);
-                        document
-                          .getElementById("fresh-harvests")
-                          ?.scrollIntoView({ behavior: "smooth" });
-                      }}
-                      className="group bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200/80 shadow-2xs hover:shadow-md transition cursor-pointer"
-                    >
-                      <div className="relative rounded-xl overflow-hidden h-28 sm:h-36 mb-2.5">
-                        <img
-                          src={cat.image}
-                          alt={cat.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                        />
-                        <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-white/95 text-slate-800 text-[9px] sm:text-[10px] font-bold shadow-xs">
-                          {cat.badge}
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-xs sm:text-sm text-slate-900 group-hover:text-[#14532D]">
-                        {cat.title}
-                      </h3>
-                      <p className="text-[10px] sm:text-[11px] text-slate-500 line-clamp-1">
-                        {cat.subtitle}
-                      </p>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
+                  {CATEGORIES_SHOWCASE.map((cat) => {
+                    const isSelected = selectedCategory === cat.id;
+                    const count = categoryBatchCounts[cat.id] || 0;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCategory(isSelected ? "ALL" : cat.id);
+                          document
+                            .getElementById("fresh-harvests")
+                            ?.scrollIntoView({ behavior: "smooth" });
+                        }}
+                        className={`group flex items-center gap-3 p-2.5 sm:p-3 rounded-2xl border text-left transition cursor-pointer ${
+                          isSelected
+                            ? "bg-[#14532D] text-white border-[#14532D] shadow-md ring-2 ring-emerald-500/30"
+                            : "bg-white hover:bg-emerald-50/50 text-slate-900 border-slate-200/90 shadow-2xs"
+                        }`}
+                      >
+                        <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden shrink-0 bg-slate-100">
+                          <img
+                            src={cat.image}
+                            alt={cat.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded-full ${
+                                isSelected
+                                  ? "bg-amber-400 text-slate-950"
+                                  : "bg-emerald-50 text-emerald-800"
+                              }`}
+                            >
+                              {count} {count === 1 ? "Batch" : "Batches"}
+                            </span>
+                          </div>
+                          <h3
+                            className={`font-extrabold text-xs sm:text-sm truncate mt-0.5 ${
+                              isSelected ? "text-white" : "text-slate-900 group-hover:text-[#14532D]"
+                            }`}
+                          >
+                            {cat.icon} {cat.shortLabel}
+                          </h3>
+                          <p
+                            className={`text-[10px] truncate ${
+                              isSelected ? "text-emerald-100" : "text-slate-500"
+                            }`}
+                          >
+                            {cat.subtitle}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
             )}
 
-            {/* 7. FRESH DAILY HARVESTS (DARAZ-STYLE MOBILE-FIRST 2-COL GRID & INSTANT SORT) */}
+            {/* 6. FRESH DAILY HARVESTS WITH UNIFIED COMPACT PRECISION FILTER & SEARCH TOOLBAR */}
             {activeTab !== "stories" && (
               <section
                 id="fresh-harvests"
-                className="max-w-7xl mx-auto px-3 sm:px-8 py-5 sm:py-8 space-y-5"
+                className="max-w-7xl mx-auto px-3 sm:px-8 py-5 sm:py-7 space-y-4"
               >
-                <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3.5">
-                  <div>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[11px] font-bold">
-                      ● Live Farm Marketplace ({filteredProducts.length} Batches)
-                    </span>
-                    <h2 className="text-xl sm:text-3xl font-black text-slate-900 mt-1">
-                      {tr("Fresh Daily Harvests", "ताजा दैनिक कृषि उपज")}
-                    </h2>
-                  </div>
-
-                  {/* Mobile-Friendly Category Tabs + Instant Sort & In-Stock Controls */}
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
-                    <div className="flex overflow-x-auto max-w-full gap-1 bg-white p-1 rounded-xl border border-slate-200 no-scrollbar">
-                      {[
-                        { id: "ALL", label: "All" },
-                        { id: "VEGETABLES", label: "🥬 Veg" },
-                        { id: "FRUITS", label: "🍎 Fruits" },
-                        { id: "GRAINS", label: "🌾 Grains" },
-                        { id: "SPICES", label: "🌶️ Spices" },
-                        { id: "DAIRY", label: "🍯 Dairy/Oil" },
-                      ].map((tab) => (
-                        <button
-                          key={tab.id}
-                          onClick={() => setSelectedCategory(tab.id)}
-                          className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                            selectedCategory === tab.id
-                              ? "bg-[#14532D] text-white shadow-2xs"
-                              : "text-slate-600 hover:bg-slate-100"
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
+                {/* Unified Compact Filter & Search Bar */}
+                <div className="bg-white rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 border border-slate-200/90 shadow-2xs space-y-3">
+                  {/* Top Row: Title + Live Batch Count + Scrollable Category Pills */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight">
+                        {tr("Fresh Daily Harvests", "ताजा दैनिक कृषि उपज")}
+                      </h2>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-[11px] font-extrabold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                        {filteredProducts.length === dbProducts.length
+                          ? `${filteredProducts.length} Batches`
+                          : `${filteredProducts.length} of ${dbProducts.length} Batches`}
+                      </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* Category Filter Pills with Live Counts */}
+                    <div className="flex overflow-x-auto max-w-full gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/70 no-scrollbar">
+                      {[
+                        { id: "ALL", label: "All", count: categoryBatchCounts.ALL },
+                        { id: "VEGETABLES", label: "🥬 Veg", count: categoryBatchCounts.VEGETABLES },
+                        { id: "FRUITS", label: "🍎 Fruits", count: categoryBatchCounts.FRUITS },
+                        { id: "GRAINS", label: "🌾 Grains", count: categoryBatchCounts.GRAINS },
+                        { id: "SPICES", label: "🌶️ Spices", count: categoryBatchCounts.SPICES },
+                        { id: "DAIRY", label: "🍯 Dairy", count: categoryBatchCounts.DAIRY },
+                      ].map((tab) => {
+                        const active = selectedCategory === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setSelectedCategory(tab.id)}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-extrabold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer ${
+                              active
+                                ? "bg-[#14532D] text-white shadow-2xs"
+                                : "text-slate-600 hover:bg-white hover:text-slate-900"
+                            }`}
+                          >
+                            <span>{tab.label}</span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded-full text-[9px] font-black ${
+                                active
+                                  ? "bg-amber-400 text-slate-950"
+                                  : "bg-slate-200/80 text-slate-600"
+                              }`}
+                            >
+                              {tab.count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Second Row: Compact Search + Dynamic Origin + Sort + In-Stock Toggle */}
+                  <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 pt-1 border-t border-slate-100">
+                    {/* Precision Instant Search Input */}
+                    <div className="relative flex-1">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search by crop name, Nepali name (e.g. aalu, syau, marsi), or farm origin..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#14532D] text-xs font-medium text-slate-800 outline-none transition"
+                      />
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery("")}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                          title="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Controls Group */}
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                      {/* Dynamic Origin Location Filter */}
+                      <select
+                        value={selectedDistrict}
+                        onChange={(e) => setSelectedDistrict(e.target.value)}
+                        className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-slate-50 hover:bg-white border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                        title="Filter by farm origin"
+                      >
+                        <option value="ALL">📍 All Farm Origins</option>
+                        {availableOrigins.map((loc) => (
+                          <option key={loc} value={loc}>
+                            📍 {loc}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Sort Selector */}
                       <select
                         value={sortBy}
                         onChange={(e) => setSortBy(e.target.value)}
-                        className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                        className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-slate-50 hover:bg-white border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
                         title="Sort produce batches"
                       >
-                        <option value="FEATURED">✨ Sort: Featured</option>
+                        <option value="FEATURED">
+                          {searchQuery.trim() ? "🎯 Sort: Best Match" : "✨ Sort: Featured"}
+                        </option>
                         <option value="PRICE_ASC">💰 Price: Low to High</option>
                         <option value="PRICE_DESC">💎 Price: High to Low</option>
+                        <option value="DISCOUNT_DESC">🔥 Biggest Discount</option>
                         <option value="STOCK_DESC">📦 Stock: High to Low</option>
                       </select>
 
+                      {/* In-Stock Toggle */}
                       <button
                         type="button"
                         onClick={() => setInStockOnly(!inStockOnly)}
                         className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition cursor-pointer ${
                           inStockOnly
                             ? "bg-emerald-50 border-emerald-500 text-[#14532D]"
-                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-white"
                         }`}
                       >
                         {inStockOnly ? "✓ In Stock" : "In Stock Only"}
                       </button>
+
+                      {/* Quick Reset Button (Only shown when a filter/search is active) */}
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery("");
+                            setSelectedCategory("ALL");
+                            setSelectedDistrict("ALL");
+                            setSortBy("FEATURED");
+                            setInStockOnly(false);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 text-xs font-extrabold whitespace-nowrap transition cursor-pointer"
+                        >
+                          Reset ✕
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* Compact Quick-Search Pills OR Active Filter Chips */}
+                  {hasActiveFilters ? (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
+                      <span className="text-slate-400 font-bold">Active:</span>
+                      {selectedCategory !== "ALL" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] font-bold">
+                          Category: {selectedCategory}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCategory("ALL")}
+                            className="ml-0.5 hover:text-red-600 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      {selectedDistrict !== "ALL" && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] font-bold">
+                          Origin: {selectedDistrict}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDistrict("ALL")}
+                            className="ml-0.5 hover:text-red-600 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      {searchQuery.trim() && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900 font-bold">
+                          Search: &ldquo;{searchQuery.trim()}&rdquo;
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery("")}
+                            className="ml-0.5 hover:text-red-600 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      {inStockOnly && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold">
+                          In Stock Only
+                          <button
+                            type="button"
+                            onClick={() => setInStockOnly(false)}
+                            className="ml-0.5 hover:text-red-600 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5 text-[11px]">
+                      <span className="text-slate-400 font-bold shrink-0">Popular:</span>
+                      {[
+                        { label: "🍅 Tomato", term: "Tomato" },
+                        { label: "🍎 Apple", term: "Apple" },
+                        { label: "🥔 Potato", term: "Potato" },
+                        { label: "🌾 Marsi Rice", term: "Marsi" },
+                        { label: "🌶️ Akabare Chili", term: "Chili" },
+                        { label: "🍯 Honey", term: "Honey" },
+                      ].map((t) => (
+                        <button
+                          key={t.term}
+                          type="button"
+                          onClick={() => setSearchQuery(t.term)}
+                          className="px-2.5 py-0.5 rounded-full bg-slate-100 hover:bg-emerald-50 hover:text-[#14532D] text-slate-600 font-semibold whitespace-nowrap transition cursor-pointer"
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {loadingProducts && dbProducts.length === 0 ? (
+                                {loadingProducts && dbProducts.length === 0 ? (
                   <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-6">
                     {[1, 2, 3, 4, 5, 6].map((n) => (
                       <div
@@ -6145,8 +6462,8 @@ export default function App() {
             </li>
 
             <li>
-              ✉️ <a href="mailto:support@krishimart.com.np" className="hover:text-green-600 transition-colors">
-                support@krishimart.com.np
+              ✉️ <a href="mailto:support.krishimart@tgmail.com" className="hover:text-green-600 transition-colors">
+                support.krishimart@tgmail.com
               </a>
             </li>
               <li>🕒 6:00 AM – 10:00 PM NPT Daily</li>
