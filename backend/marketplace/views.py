@@ -174,32 +174,69 @@ def _save_discount_cache():
 ) = _load_discount_cache()
 
 
+# Global thread locks & deduplication cache so Google Apps Script never drops concurrent requests
+# and never sends duplicate (2x) emails for the same order or submission event.
+_EMAIL_SEND_LOCK = threading.Lock()
+_EMAIL_DEDUP_LOCK = threading.Lock()
+_LAST_EMAIL_DISPATCH_TS = 0.0
+_SENT_EMAIL_EVENTS = {}
+
+
+def _claim_email_event_once(event_key, ttl_seconds=300):
+    """
+    Returns True if this event_key has NOT been sent within ttl_seconds, and records it.
+    Returns False if it was already claimed (preventing any duplicate 2x email).
+    """
+    import time
+
+    now_ts = time.time()
+    with _EMAIL_DEDUP_LOCK:
+        # Clean up expired entries
+        expired = [k for k, exp in _SENT_EMAIL_EVENTS.items() if exp < now_ts]
+        for k in expired:
+            _SENT_EMAIL_EVENTS.pop(k, None)
+        if event_key in _SENT_EMAIL_EVENTS:
+            return False
+        _SENT_EMAIL_EVENTS[event_key] = now_ts + ttl_seconds
+        return True
+
+
 def send_krishimart_email_async(to_email, subject, html_message, plain_message):
     """
-    Sends an email via the KrishiMart Google Apps Script bridge in a background thread
-    so Admin actions (Confirm, Deliver, Cancel, Buy from Farmer) return immediately.
+    Sends an email via the KrishiMart Google Apps Script bridge in a background thread,
+    serialized with _EMAIL_SEND_LOCK so simultaneous Customer + Admin emails never collide.
     """
     if not to_email or "@" not in str(to_email):
         return
 
     def _worker():
-        payload = {
-            "to": str(to_email).strip(),
-            "subject": subject,
-            "text": plain_message,
-            "html": html_message,
-        }
-        req = urllib.request.Request(
-            GOOGLE_SCRIPT_WEBHOOK_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()
-        except Exception as err:
-            print(f"[KrishiMart Email Notice] To: {to_email} | {err}")
+        global _LAST_EMAIL_DISPATCH_TS
+        import time
+
+        with _EMAIL_SEND_LOCK:
+            elapsed = time.time() - _LAST_EMAIL_DISPATCH_TS
+            if elapsed < 0.45:
+                time.sleep(0.45 - elapsed)
+            payload = {
+                "to": str(to_email).strip(),
+                "subject": subject,
+                "text": plain_message,
+                "html": html_message,
+            }
+            req = urllib.request.Request(
+                GOOGLE_SCRIPT_WEBHOOK_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp.read()
+                print(f"[KrishiMart Email Sent] To: {to_email} | Subject: {subject}")
+            except Exception as err:
+                print(f"[KrishiMart Email Notice] To: {to_email} | {err}")
+            finally:
+                _LAST_EMAIL_DISPATCH_TS = time.time()
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -233,13 +270,6 @@ def send_order_status_email(order, discount_percent=None):
     subtotal = get_order_original_subtotal(order)
     qty = Decimal(str(getattr(order, "quantity", 1) or 1))
     unit_price = (subtotal / qty).quantize(Decimal("0.01")) if qty > 0 else subtotal
-    d_meta = ORDER_DELIVERY_META.get(order.id) or {}
-    delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(Decimal("0.01"))
-    distance_km = d_meta.get("distance_km")
-    is_free_deliv = bool(d_meta.get("is_free_delivery", False))
-    grand_total = (subtotal + delivery_charge).quantize(Decimal("0.01"))
-    dist_info_str = f"{distance_km} km from Campus Chowk Hub" if distance_km is not None else "Standard Local Delivery"
-    deliv_fee_str = "FREE (रु 0.00 — >6 kg within 7 km)" if is_free_deliv else f"रु {delivery_charge}" 
 
     # Determine discount percentage
     if discount_percent is not None:
@@ -263,7 +293,20 @@ def send_order_status_email(order, discount_percent=None):
 
     status_val = (getattr(order, "status", "") or "").upper()
 
-    if status_val == "CONFIRMED":
+    if not _claim_email_event_once(("CUSTOMER_ORDER_STATUS", getattr(order, "id", None), status_val), ttl_seconds=120):
+        return
+
+    if status_val == "PENDING":
+        subject = f"Your KrishiMart Order #KM-ORD-{order.id} Has Been Placed!"
+        headline = "Order Placed & Received"
+        badge_bg, badge_border, badge_color = "#f0fdf4", "#16a34a", "#14532D"
+        badge_text = "🛒 ORDER PLACED & RECEIVED"
+        intro_text = (
+            f"Namaste <strong>{buyer_name}</strong>, thank you for shopping with KrishiMart! "
+            f"We have received your order <strong>#KM-ORD-{order.id}</strong> for <strong>{product_name}</strong> "
+            f"and our Admin team is reviewing it for fresh dispatch."
+        )
+    elif status_val == "CONFIRMED":
         subject = f"Your KrishiMart Order #KM-ORD-{order.id} is Confirmed!"
         headline = "Order Confirmed & Preparing for Dispatch"
         badge_bg, badge_border, badge_color = "#f0fdf4", "#16a34a", "#14532D"
@@ -396,32 +439,106 @@ def send_order_status_email(order, discount_percent=None):
     send_krishimart_email_async(to_email, subject, html_message, plain_message)
 
 
-def get_admin_notification_emails():
+def get_admin_notification_emails(exclude_email=None):
     """
-    Returns all unique valid Admin email addresses from the database (users with is_staff=True
-    or role="ADMIN") plus the primary KrishiMart support/admin inbox.
+    Returns the valid Admin email address(es) from the PostgreSQL User table
+    (users with role='ADMIN', is_superuser=True, or is_staff=True).
+    IMPORTANT:
+      1. We DO NOT add the dummy 'krishimart.support@gmail.com' fallback when real Admin users
+         exist in the database — that previously caused Google Apps Script (owned by the Admin's Gmail)
+         to send a second copy with the exact same Subject to 'krishimart.support@gmail.com', which
+         Gmail's Conversation View merged into the Admin's Inbox as 2 identical messages!
+      2. If exclude_email (e.g. the customer's email) is passed and other Admin emails exist,
+         we exclude it so the customer does not receive the Admin copy.
     """
     from django.contrib.auth import get_user_model
     from django.db.models import Q
 
-    emails = set()
-    default_admin_email = config(
-        "ADMIN_NOTIFICATION_EMAIL", default="krishimart.support@gmail.com"
-    ).strip()
-    if default_admin_email and "@" in default_admin_email:
-        emails.add(default_admin_email.lower())
+    db_emails = []
+    seen = set()
+    excl = (str(exclude_email or "").strip().lower()) if exclude_email else ""
 
+    # 1. Check if a custom ADMIN_NOTIFICATION_EMAIL was explicitly set in .env
+    custom_env = config("ADMIN_NOTIFICATION_EMAIL", default="").strip()
+    if "<" in custom_env and ">" in custom_env:
+        custom_env = custom_env.split("<")[1].split(">")[0].strip()
+    if (
+        custom_env
+        and "@" in custom_env
+        and "smtp-brevo.com" not in custom_env.lower()
+        and custom_env.lower() != "krishimart.support@gmail.com"
+    ):
+        c_low = custom_env.lower()
+        db_emails.append(c_low)
+        seen.add(c_low)
+
+    # 2. Query Admin users from PostgreSQL (role='ADMIN' first, then superuser/staff)
     try:
         User = get_user_model()
-        admin_users = User.objects.filter(Q(is_staff=True) | Q(role="ADMIN"))
-        for u in admin_users:
+        admin_qs = User.objects.filter(
+            Q(role__iexact="ADMIN") | Q(is_superuser=True) | Q(is_staff=True)
+        ).order_by("id")
+
+        # Pass A: Users with explicit role='ADMIN' (excluding dummy krishimart.support@gmail.com)
+        for u in admin_qs:
+            if (getattr(u, "role", "") or "").upper() == "ADMIN":
+                u_email = (getattr(u, "email", "") or "").strip().lower()
+                if (
+                    u_email
+                    and "@" in u_email
+                    and u_email not in seen
+                    and u_email != "krishimart.support@gmail.com"
+                ):
+                    db_emails.append(u_email)
+                    seen.add(u_email)
+
+        # Pass B: Any superuser/staff user if not already in db_emails
+        for u in admin_qs:
             u_email = (getattr(u, "email", "") or "").strip().lower()
-            if u_email and "@" in u_email:
-                emails.add(u_email)
+            if (
+                u_email
+                and "@" in u_email
+                and u_email not in seen
+                and u_email != "krishimart.support@gmail.com"
+            ):
+                db_emails.append(u_email)
+                seen.add(u_email)
+
+        # Pass C: If the Admin user in the DB literally registered with krishimart.support@gmail.com
+        if not db_emails:
+            for u in admin_qs:
+                u_email = (getattr(u, "email", "") or "").strip().lower()
+                if u_email and "@" in u_email and u_email not in seen:
+                    db_emails.append(u_email)
+                    seen.add(u_email)
     except Exception as e:
         print(f"[Admin Email Lookup Notice]: {e}")
 
-    return sorted(emails)
+    # Filter out the customer's email if another Admin email exists
+    if excl and len(db_emails) > 1:
+        filtered = [e for e in db_emails if e != excl]
+        if filtered:
+            db_emails = filtered
+
+    if db_emails:
+        return db_emails
+
+    return ["krishimart.support@gmail.com"]
+
+
+def send_krishimart_email_to_admins_async(subject, html_message, plain_message, exclude_email=None):
+    """
+    Dispatches the Admin alert email to the Admin user(s) in PostgreSQL using the serialized sender.
+    If multiple Admin accounts exist in PostgreSQL, secondary copies get a distinct subject suffix
+    so Gmail's Conversation View in the primary Admin inbox never merges a Sent copy into the Inbox thread.
+    """
+    admin_emails = get_admin_notification_emails(exclude_email=exclude_email)
+    if not admin_emails:
+        return
+
+    for idx, admin_email in enumerate(admin_emails):
+        distinct_subject = subject if idx == 0 else f"{subject} [Admin #{idx + 1}]"
+        send_krishimart_email_async(admin_email, distinct_subject, html_message, plain_message)
 
 
 def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=None):
@@ -429,10 +546,9 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
     Sends an executive KrishiMart HTML card email to the Admin(s) whenever:
       1. A customer places a new order (event_type="NEW_ORDER")
       2. An order is cancelled (event_type="ORDER_CANCELLED")
-    Designed with Primary-Inbox-safe inline CSS and zero external phishing-triggering links.
     """
-    admin_emails = get_admin_notification_emails()
-    if not admin_emails:
+    order_id = getattr(order, "id", None)
+    if not _claim_email_event_once(("ADMIN_ORDER_EVENT", event_type, order_id), ttl_seconds=300):
         return
 
     buyer = getattr(order, "buyer", None)
@@ -450,8 +566,32 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
     qty = Decimal(str(getattr(order, "quantity", 1) or 1))
     unit_price = (subtotal / qty).quantize(Decimal("0.01")) if qty > 0 else subtotal
 
+    # Delivery Distance & Delivery Charge metadata for this order
+    d_meta = ORDER_DELIVERY_META.get(getattr(order, "id", None)) or {}
+    try:
+        delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(
+            Decimal("0.01")
+        )
+    except Exception:
+        delivery_charge = Decimal("0.00")
+    distance_km = d_meta.get("distance_km")
+    is_free_deliv = bool(d_meta.get("is_free_delivery", False))
+    grand_total = (subtotal + delivery_charge).quantize(Decimal("0.01"))
+    dist_info_str = (
+        f"{distance_km} km from Campus Chowk Hub"
+        if distance_km is not None
+        else "Standard Local Delivery"
+    )
+    deliv_fee_str = (
+        "FREE (रु 0.00 — >6 kg within 7 km)"
+        if is_free_deliv
+        else f"रु {delivery_charge}"
+    )
+
     raw_address = str(getattr(order, "delivery_address", "") or "Nepal").strip()
-    contact_phone = str(getattr(order, "contact_phone", "") or getattr(buyer, "phone_number", "") or "—")
+    contact_phone = str(
+        getattr(order, "contact_phone", "") or getattr(buyer, "phone_number", "") or "—"
+    )
 
     # Parse payment method tag [COD], [ESEWA], [KHALTI] from delivery_address if present
     payment_label = "Cash on Delivery (COD)"
@@ -471,7 +611,9 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
     if remaining_stock is not None:
         try:
             if Decimal(str(remaining_stock)) <= Decimal("15"):
-                low_stock_html = ' <span style="color: #dc2626; font-weight: 800;">(⚠️ Low Stock)</span>'
+                low_stock_html = (
+                    ' <span style="color: #dc2626; font-weight: 800;">(⚠️ Low Stock)</span>'
+                )
         except Exception:
             pass
 
@@ -484,16 +626,19 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
             f"Namaste <strong>Admin</strong>, a new order has just been placed on KrishiMart by "
             f"<strong>{buyer_name}</strong> and is awaiting your confirmation and dispatch."
         )
-        status_html = '<span style="color: #b45309; font-weight: 800;">⏳ Pending Admin Confirmation</span>'
-        stock_row_html = f'<div><strong>Remaining Store Stock:</strong> {stock_str}{low_stock_html}</div>'
+        status_html = (
+            '<span style="color: #b45309; font-weight: 800;">⏳ Pending Admin Confirmation</span>'
+        )
+        stock_row_html = (
+            f"<div><strong>Remaining Store Stock:</strong> {stock_str}{low_stock_html}</div>"
+        )
         amount_label = "Order Total Amount"
         amount_color = "#14532D"
         footer_note = (
             "Open the <strong>Customer Orders</strong> tab in your KrishiMart Admin Control Panel "
-            "to review this order, apply any discount, and dispatch."
+            "to view the customer pin on the inline map, apply any discount, and dispatch."
         )
     else:
-        # ORDER_CANCELLED
         actor_is_admin = bool(
             actor and (getattr(actor, "is_staff", False) or getattr(actor, "role", "") == "ADMIN")
         )
@@ -511,7 +656,9 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
             f"<strong>{product_name}</strong> ({order.quantity} {product_unit}) was cancelled by "
             f"<strong>{cancelled_by_text}</strong>. The quantity has been automatically restored to your store inventory."
         )
-        status_html = f'<span style="color: #991b1b; font-weight: 800;">✕ Cancelled by {cancelled_by_text}</span>'
+        status_html = (
+            f'<span style="color: #991b1b; font-weight: 800;">✕ Cancelled by {cancelled_by_text}</span>'
+        )
         stock_row_html = (
             f'<div><strong>Inventory Restored:</strong> <span style="color: #14532D; font-weight: 800;">+{order.quantity} {product_unit}</span> (Current Stock: {stock_str})</div>'
         )
@@ -526,7 +673,10 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
         f"Order Reference: #KM-ORD-{order.id}\n"
         f"Produce Item: {product_name} ({product_cat})\n"
         f"Quantity: {order.quantity} {product_unit} (Rs. {unit_price}/{product_unit})\n"
-        f"{amount_label}: Rs. {subtotal}\n"
+        f"Produce Subtotal: Rs. {subtotal}\n"
+        f"Delivery Distance: {dist_info_str}\n"
+        f"Home Delivery Charge: {deliv_fee_str}\n"
+        f"{amount_label} (Incl. Delivery): Rs. {grand_total}\n"
         f"Payment Method: {payment_label}\n"
         f"Store Stock: {stock_str}\n\n"
         f"Customer Details:\n"
@@ -608,9 +758,135 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
     </html>
     """
 
-    for admin_email in admin_emails:
-        send_krishimart_email_async(admin_email, subject, html_message, plain_message)
+    send_krishimart_email_to_admins_async(subject, html_message, plain_message, exclude_email=buyer_email)
 
+
+def send_admin_farmer_submission_email(submission):
+    """
+    Sends an executive KrishiMart HTML card email to the Admin(s) whenever a Farmer
+    submits a new wholesale harvest batch to sell ("Sell Your Harvest").
+    """
+    sub_id = getattr(submission, "id", None)
+    if not _claim_email_event_once(("ADMIN_FARMER_SUBMISSION", sub_id), ttl_seconds=300):
+        return
+
+    farmer = getattr(submission, "seller", None)
+    farmer_id = getattr(farmer, "id", "—")
+    farmer_name = (
+        getattr(farmer, "full_name", None)
+        or getattr(submission, "seller_name", None)
+        or "Verified Farmer"
+    )
+    farmer_email = getattr(farmer, "email", None) or "Not provided"
+
+    crop_name = getattr(submission, "vegetable_name", "Farm Harvest")
+    category = getattr(submission, "category", "Fresh Produce")
+    qty = Decimal(str(getattr(submission, "quantity", 0) or 0)).quantize(Decimal("0.01"))
+    unit = getattr(submission, "unit", "kg") or "kg"
+    expected_rate = Decimal(
+        str(getattr(submission, "expected_price_per_unit", 0) or 0)
+    ).quantize(Decimal("0.01"))
+    estimated_total = (qty * expected_rate).quantize(Decimal("0.01"))
+    pickup_loc = getattr(submission, "pickup_location", "Nepal") or "Nepal"
+    contact_phone = (
+        getattr(submission, "contact_phone", None)
+        or getattr(farmer, "phone_number", None)
+        or "—"
+    )
+    description = (
+        getattr(submission, "vegetable_description", None)
+        or "Freshly harvested farm produce."
+    )
+
+    subject = f"New Farmer Harvest Offer #KM-SUB-{submission.id} — {crop_name} ({qty} {unit})"
+    headline = f"New Harvest Offer #KM-SUB-{submission.id} Submitted"
+
+    plain_message = (
+        f"{headline}\n\n"
+        f"Offer Reference: #KM-SUB-{submission.id}\n"
+        f"Status: PENDING ADMIN REVIEW\n"
+        f"Crop Offered: {crop_name} ({category})\n"
+        f"Quantity Offered: {qty} {unit}\n"
+        f"Farmer Quoted Rate: Rs. {expected_rate} / {unit}\n"
+        f"Estimated Batch Value: Rs. {estimated_total}\n"
+        f"Harvest Description: {description}\n\n"
+        f"Farmer & Pickup Details:\n"
+        f"Farmer Name: {farmer_name} (#KM-USR-{farmer_id})\n"
+        f"Farmer Email: {farmer_email}\n"
+        f"Contact Phone: {contact_phone}\n"
+        f"Pickup Location: {pickup_loc}\n\n"
+        f"KrishiMart Agricultural Marketplace — Admin Notification System\n"
+        f"Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal"
+    )
+
+    html_message = f"""
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+      </head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px;">
+        <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <div style="background: #14532D; padding: 24px; text-align: center; color: #ffffff;">
+            <div style="display: inline-block; background: rgba(251, 191, 36, 0.2); border: 1px solid rgba(251, 191, 36, 0.5); color: #fde68a; font-size: 10px; font-weight: 800; letter-spacing: 1px; padding: 3px 10px; border-radius: 999px; margin-bottom: 8px; text-transform: uppercase;">
+              🛡️ Admin Control Center Alert
+            </div>
+            <h1 style="font-size: 24px; font-weight: 900; margin: 0; color: #ffffff;">🌱 KrishiMart Nepal</h1>
+            <div style="font-size: 12px; color: #a7f3d0; margin-top: 4px;">किसान र उपभोक्ता जोड्ने डिजिटल बजार</div>
+          </div>
+
+          <div style="padding: 28px 24px; text-align: center; color: #1e293b;">
+            <div style="background: #f0fdf4; border: 1.5px dashed #16a34a; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 800; color: #14532D; display: inline-block; margin-bottom: 14px;">
+              🌾 NEW FARMER HARVEST OFFER
+            </div>
+            <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 10px 0; color: #0f172a;">{headline}</h2>
+            <p style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 20px 0;">
+              Namaste <strong>Admin</strong>, verified farmer <strong>{farmer_name}</strong> has submitted a new wholesale harvest batch on KrishiMart for your review and procurement.
+            </p>
+
+            <!-- Box 1: Harvest Batch & Wholesale Quote -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; text-align: left; font-size: 13px; line-height: 1.85; color: #334155; margin-bottom: 14px;">
+              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #14532D; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+                🌾 Harvest Batch &amp; Wholesale Quote
+              </div>
+              <div><strong>Offer Reference:</strong> #KM-SUB-{submission.id}</div>
+              <div><strong>Offer Status:</strong> <span style="color: #b45309; font-weight: 800;">⏳ Pending Admin Review</span></div>
+              <div><strong>Crop / Produce:</strong> {crop_name} ({category})</div>
+              <div><strong>Offered Quantity:</strong> {qty} {unit}</div>
+              <div><strong>Farmer Quoted Rate:</strong> रु {expected_rate} / {unit}</div>
+              <div><strong>Harvest Notes:</strong> {description}</div>
+              <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #cbd5e1;">
+                <strong>Estimated Batch Value:</strong> <span style="color: #14532D; font-weight: 900; font-size: 15px;">रु {estimated_total}</span>
+              </div>
+            </div>
+
+            <!-- Box 2: Farmer & Pickup Location Details -->
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; text-align: left; font-size: 13px; line-height: 1.85; color: #1e293b; margin-bottom: 18px;">
+              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #14532D; margin-bottom: 6px; border-bottom: 1px solid #bbf7d0; padding-bottom: 4px;">
+                👨‍🌾 Farmer &amp; Farm Pickup Details
+              </div>
+              <div><strong>Farmer Name:</strong> {farmer_name} (#KM-USR-{farmer_id})</div>
+              <div><strong>Farmer Email:</strong> {farmer_email}</div>
+              <div><strong>Contact Phone:</strong> {contact_phone}</div>
+              <div><strong>Pickup Location:</strong> {pickup_loc}</div>
+            </div>
+
+            <p style="font-size: 12px; color: #64748b; margin: 0; line-height: 1.5;">
+              Open the <strong>Farmer Offers</strong> tab in your KrishiMart Admin Control Panel to buy this harvest batch, approve, or decline.
+            </p>
+          </div>
+
+          <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; font-size: 11px; color: #64748b; text-align: center; line-height: 1.5;">
+            KrishiMart Agricultural Marketplace • Admin Alert System<br/>
+            Dhangadhi Hub, Kailali &amp; Kathmandu Valley, Nepal<br/>
+            support@krishimart.com.np • +977-9703931744
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    send_krishimart_email_to_admins_async(subject, html_message, plain_message, exclude_email=farmer_email)
 
 
 def send_farmer_procurement_email(purchase, is_settlement_update=False):
@@ -987,11 +1263,20 @@ class SellProductSubmissionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         sub_obj = serializer.save(seller=self.request.user)
-        img_uri = self.request.data.get("image_data_uri")
-        if img_uri and str(img_uri).startswith("data:image/"):
-            save_media_to_db(f"submission_img_{sub_obj.id}", img_uri)
-        elif getattr(sub_obj, "image", None):
-            get_media_from_db(f"submission_img_{sub_obj.id}", sub_obj.image)
+        try:
+            img_uri = self.request.data.get("image_data_uri")
+            if img_uri and str(img_uri).startswith("data:image/"):
+                save_media_to_db(f"submission_img_{sub_obj.id}", img_uri)
+            elif getattr(sub_obj, "image", None):
+                get_media_from_db(f"submission_img_{sub_obj.id}", sub_obj.image)
+        except Exception as e:
+            print(f"[Submission Image Save Notice]: {e}")
+
+        # Immediately notify Admin(s) by email when a Farmer submits a new harvest batch to sell
+        try:
+            send_admin_farmer_submission_email(sub_obj)
+        except Exception as e:
+            print(f"[Admin Farmer Submission Email Notice]: {e}")
 
     @action(detail=True, methods=["post"], permission_classes=[IsSiteAdmin])
     def buy_from_farmer(self, request, pk=None):
@@ -1284,6 +1569,13 @@ class OrderViewSet(viewsets.ModelViewSet):
         except Exception as e:
             print(f"[Order Delivery Meta Notice]: {e}")
 
+        # 1. Immediately email the Customer who placed the order ("Your KrishiMart Order #KM-ORD-... Has Been Placed!")
+        try:
+            send_order_status_email(new_order)
+        except Exception as e:
+            print(f"[Customer Order Placed Email Notice]: {e}")
+
+        # 2. Immediately email the Admin (strictly 1 notification message)
         try:
             send_admin_order_notification_email(
                 new_order, event_type="NEW_ORDER", actor=self.request.user
@@ -1309,15 +1601,21 @@ class OrderViewSet(viewsets.ModelViewSet):
                 product.stock_quantity += updated_order.quantity
                 product.save()
             # Immediately notify Admin(s) by email when an order is cancelled
-            send_admin_order_notification_email(
-                updated_order, event_type="ORDER_CANCELLED", actor=self.request.user
-            )
+            try:
+                send_admin_order_notification_email(
+                    updated_order, event_type="ORDER_CANCELLED", actor=self.request.user
+                )
+            except Exception as e:
+                print(f"[Admin Order Cancelled Email Notice]: {e}")
 
         # For DELIVERED and CANCELLED, send the email immediately on status change.
         # For CONFIRMED, NEVER send email on dropdown change — wait until Admin clicks
         # "Apply Discount & Email Receipt" inside the 1/4 A4 Receipt Modal!
         if old_status != updated_order.status and updated_order.status in ["DELIVERED", "CANCELLED"]:
-            send_order_status_email(updated_order)
+            try:
+                send_order_status_email(updated_order)
+            except Exception as e:
+                print(f"[Customer Order Status Email Notice]: {e}")
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def apply_discount_and_email(self, request, pk=None):

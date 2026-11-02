@@ -1235,13 +1235,15 @@ export default function App() {
   const handleAddToBasket = (product, qtyToAdd = 1, openDrawer = false) => {
     requireAuth(() => {
       setBasket((prev) => {
-        const existing = prev.find((item) => item.id === product.id);
+        const existing = prev.find((item) => Number(item.id) === Number(product.id));
         if (existing) {
           return prev.map((item) =>
-            item.id === product.id ? { ...item, ...product, qty: item.qty + qtyToAdd } : item
+            Number(item.id) === Number(product.id)
+              ? { ...item, ...product, qty: Number(item.qty || 0) + Number(qtyToAdd || 1) }
+              : item
           );
         }
-        return [...prev, { ...product, qty: qtyToAdd }];
+        return [...prev, { ...product, qty: Number(qtyToAdd || 1) }];
       });
       showToast(`Added ${qtyToAdd} ${product.unit} of ${product.name} to basket!`);
       if (openDrawer) {
@@ -1318,8 +1320,11 @@ export default function App() {
   const finalDeliveryCharge = isFreeDeliveryUnlocked ? 0 : rawCalculatedDeliveryFee;
   const basketGrandTotal = Number((basketTotal + finalDeliveryCharge).toFixed(2));
 
+  const checkoutInFlightRef = useRef(false);
+
   const handleCheckoutBasket = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
+    if (checkoutInFlightRef.current || checkingOut) return;
     if (!Array.isArray(basket) || basket.length === 0) return;
 
     const finalPhone = (checkoutPhone || user?.phone_number || "").trim();
@@ -1335,6 +1340,7 @@ export default function App() {
       return;
     }
 
+    checkoutInFlightRef.current = true;
     setCheckingOut(true);
     let localDelivMap = {};
     try {
@@ -1345,7 +1351,18 @@ export default function App() {
       localDelivMap = {};
     }
 
-    const itemsSnapshot = [...basket];
+    // Deduplicate snapshot by product id in case any legacy items had string vs number IDs
+    const mergedMap = new Map();
+    for (const rawItem of basket) {
+      const k = Number(rawItem.id);
+      if (mergedMap.has(k)) {
+        const prevItem = mergedMap.get(k);
+        mergedMap.set(k, { ...prevItem, qty: Number(prevItem.qty || 0) + Number(rawItem.qty || 1) });
+      } else {
+        mergedMap.set(k, { ...rawItem, qty: Number(rawItem.qty || 1) });
+      }
+    }
+    const itemsSnapshot = Array.from(mergedMap.values());
     const succeededIds = new Set();
     let lastErrorMsg = "";
 
@@ -1442,6 +1459,7 @@ export default function App() {
         showToast(lastErrorMsg || "Failed to place order. Please check your account verification.", "error");
       }
     } finally {
+      checkoutInFlightRef.current = false;
       setCheckingOut(false);
     }
   };
