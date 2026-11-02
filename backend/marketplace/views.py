@@ -109,6 +109,18 @@ import os
 DISCOUNT_CACHE_FILE = os.path.join(os.path.dirname(__file__), "order_discounts_cache.json")
 
 
+# Official KrishiMart Hub Coordinates: 28°42'11.4"N 80°36'36.1"E (Campus Chowk Area, Dhangadhi)
+DEFAULT_DELIVERY_SETTINGS = {
+    "rate_per_km": 10.0,
+    "free_min_kg": 6.0,
+    "free_max_km": 7.0,
+    "hub_lat": 28.703167,
+    "hub_lng": 80.610028,
+    "hub_dms": "28°42'11.4\"N 80°36'36.1\"E",
+    "hub_name": "KrishiMart Hub (Campus Chowk, Dhangadhi)",
+}
+
+
 def _load_discount_cache():
     try:
         if os.path.exists(DISCOUNT_CACHE_FILE):
@@ -124,10 +136,15 @@ def _load_discount_cache():
                 review_products = {
                     int(k): v for k, v in data.get("review_products", {}).items()
                 }
-                return discounts, sent, actual_prices, review_products
+                delivery_meta = {
+                    int(k): v for k, v in data.get("order_delivery_meta", {}).items()
+                }
+                saved_settings = data.get("delivery_settings") or {}
+                delivery_settings = {**DEFAULT_DELIVERY_SETTINGS, **saved_settings}
+                return discounts, sent, actual_prices, review_products, delivery_meta, delivery_settings
     except Exception:
         pass
-    return {}, set(), {}, {}
+    return {}, set(), {}, {}, {}, dict(DEFAULT_DELIVERY_SETTINGS)
 
 
 def _save_discount_cache():
@@ -137,6 +154,8 @@ def _save_discount_cache():
             "sent_orders": list(CONFIRMED_EMAIL_SENT_ORDERS),
             "product_actual_prices": {str(k): str(v) for k, v in PRODUCT_ACTUAL_PRICES.items()},
             "review_products": {str(k): v for k, v in REVIEW_PRODUCT_MAP.items()},
+            "order_delivery_meta": {str(k): v for k, v in ORDER_DELIVERY_META.items()},
+            "delivery_settings": DELIVERY_SETTINGS,
         }
         with open(DISCOUNT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -144,8 +163,15 @@ def _save_discount_cache():
         pass
 
 
-# Tracks applied discount % per order ID, Admin's Actual Price per Product ID, and Product link per Review ID
-ORDER_DISCOUNTS, CONFIRMED_EMAIL_SENT_ORDERS, PRODUCT_ACTUAL_PRICES, REVIEW_PRODUCT_MAP = _load_discount_cache()
+# Tracks applied discount %, Admin Actual Prices, Product Review links, Order Delivery Meta, and Live Delivery Rate Settings
+(
+    ORDER_DISCOUNTS,
+    CONFIRMED_EMAIL_SENT_ORDERS,
+    PRODUCT_ACTUAL_PRICES,
+    REVIEW_PRODUCT_MAP,
+    ORDER_DELIVERY_META,
+    DELIVERY_SETTINGS,
+) = _load_discount_cache()
 
 
 def send_krishimart_email_async(to_email, subject, html_message, plain_message):
@@ -207,6 +233,13 @@ def send_order_status_email(order, discount_percent=None):
     subtotal = get_order_original_subtotal(order)
     qty = Decimal(str(getattr(order, "quantity", 1) or 1))
     unit_price = (subtotal / qty).quantize(Decimal("0.01")) if qty > 0 else subtotal
+    d_meta = ORDER_DELIVERY_META.get(order.id) or {}
+    delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(Decimal("0.01"))
+    distance_km = d_meta.get("distance_km")
+    is_free_deliv = bool(d_meta.get("is_free_delivery", False))
+    grand_total = (subtotal + delivery_charge).quantize(Decimal("0.01"))
+    dist_info_str = f"{distance_km} km from Campus Chowk Hub" if distance_km is not None else "Standard Local Delivery"
+    deliv_fee_str = "FREE (रु 0.00 — >6 kg within 7 km)" if is_free_deliv else f"रु {delivery_charge}" 
 
     # Determine discount percentage
     if discount_percent is not None:
@@ -222,7 +255,11 @@ def send_order_status_email(order, discount_percent=None):
         disc_pct = Decimal("0")
 
     disc_amt = ((subtotal * disc_pct) / Decimal("100")).quantize(Decimal("0.01"))
-    net_total = (subtotal - disc_amt).quantize(Decimal("0.01"))
+    d_meta = ORDER_DELIVERY_META.get(order.id) or {}
+    delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(Decimal("0.01"))
+    distance_km = d_meta.get("distance_km")
+    is_free_deliv = bool(d_meta.get("is_free_delivery", False))
+    net_total = (subtotal - disc_amt + delivery_charge).quantize(Decimal("0.01"))
 
     status_val = (getattr(order, "status", "") or "").upper()
 
@@ -259,25 +296,46 @@ def send_order_status_email(order, discount_percent=None):
     clean_address = str(getattr(order, "delivery_address", "") or "Nepal")
     contact_phone = str(getattr(order, "contact_phone", "") or "—")
 
-    # Format pricing rows based on whether a discount was applied
+    # Format pricing rows including Produce Subtotal, Discount %, and Home Delivery Charge
     disc_pct_str = str(int(disc_pct)) if disc_pct == int(disc_pct) else str(disc_pct)
+    dist_label = f" ({distance_km} km from Hub)" if distance_km is not None else ""
+    if is_free_deliv:
+        deliv_plain = f"Home Delivery{dist_label}: FREE (Rs. 0.00 — Over 6 kg within 7 km)\n"
+        deliv_html = f'<div><strong>Home Delivery{dist_label}:</strong> <span style="color: #16a34a; font-weight: 800;">FREE (रु 0.00)</span></div>'
+    elif delivery_charge > Decimal("0"):
+        deliv_plain = f"Home Delivery Charge{dist_label}: + Rs. {delivery_charge}\n"
+        deliv_html = f'<div><strong>Home Delivery Charge{dist_label}:</strong> + रु {delivery_charge}</div>'
+    else:
+        deliv_plain = ""
+        deliv_html = ""
+
     if disc_pct > Decimal("0"):
         plain_pricing = (
-            f"Subtotal Amount: Rs. {subtotal}\n"
+            f"Produce Subtotal: Rs. {subtotal}\n"
             f"Discount ({disc_pct_str}%): - Rs. {disc_amt}\n"
-            f"Total Payable (After Discount): Rs. {net_total}\n"
+            f"{deliv_plain}"
+            f"Total Payable: Rs. {net_total}\n"
         )
         html_pricing = f"""
-              <div><strong>Subtotal Amount:</strong> रु {subtotal}</div>
+              <div><strong>Produce Subtotal:</strong> रु {subtotal}</div>
               <div style="color: #b45309;"><strong>Discount ({disc_pct_str}%):</strong> - रु {disc_amt}</div>
+              {deliv_html}
               <div style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed #cbd5e1;">
-                <strong>Total Payable (After Discount):</strong> <span style="color: #14532D; font-weight: 900; font-size: 15px;">रु {net_total}</span>
+                <strong>Total Payable:</strong> <span style="color: #14532D; font-weight: 900; font-size: 15px;">रु {net_total}</span>
               </div>
         """
     else:
-        plain_pricing = f"Total Payable: Rs. {subtotal}\n"
+        plain_pricing = (
+            f"Produce Subtotal: Rs. {subtotal}\n"
+            f"{deliv_plain}"
+            f"Total Payable: Rs. {net_total}\n"
+        )
         html_pricing = f"""
-              <div><strong>Total Payable:</strong> <span style="color: #14532D; font-weight: 800;">रु {subtotal}</span></div>
+              <div><strong>Produce Subtotal:</strong> रु {subtotal}</div>
+              {deliv_html}
+              <div style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed #cbd5e1;">
+                <strong>Total Payable:</strong> <span style="color: #14532D; font-weight: 900; font-size: 15px;">रु {net_total}</span>
+              </div>
         """
 
     plain_message = (
@@ -514,10 +572,13 @@ def send_admin_order_notification_email(order, event_type="NEW_ORDER", actor=Non
               <div><strong>Order Status:</strong> {status_html}</div>
               <div><strong>Produce Item:</strong> {product_name} ({product_cat})</div>
               <div><strong>Ordered Quantity:</strong> {order.quantity} {product_unit} (रु {unit_price}/{product_unit})</div>
+              <div><strong>Produce Subtotal:</strong> रु {subtotal}</div>
+              <div><strong>Delivery Distance:</strong> {dist_info_str}</div>
+              <div><strong>Home Delivery Charge:</strong> {deliv_fee_str}</div>
               <div><strong>Payment Method:</strong> {payment_label}</div>
               {stock_row_html}
               <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #cbd5e1;">
-                <strong>{amount_label}:</strong> <span style="color: {amount_color}; font-weight: 900; font-size: 15px;">रु {subtotal}</span>
+                <strong>{amount_label} (Incl. Delivery):</strong> <span style="color: {amount_color}; font-weight: 900; font-size: 15px;">रु {grand_total}</span>
               </div>
             </div>
 
@@ -1110,13 +1171,64 @@ class OrderViewSet(viewsets.ModelViewSet):
         subtotal = get_order_original_subtotal(order_obj)
         disc_pct = ORDER_DISCOUNTS.get(order_obj.id, Decimal("0"))
         disc_amt = ((subtotal * disc_pct) / Decimal("100")).quantize(Decimal("0.01"))
-        net_total = (subtotal - disc_amt).quantize(Decimal("0.01"))
+        d_meta = ORDER_DELIVERY_META.get(order_obj.id) or {}
+        delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(
+            Decimal("0.01")
+        )
+        net_total = (subtotal - disc_amt + delivery_charge).quantize(Decimal("0.01"))
         enriched = dict(data_dict)
         enriched["subtotal_price"] = str(subtotal)
         enriched["discount_percent"] = float(disc_pct)
         enriched["discount_amount"] = str(disc_amt)
+        enriched["delivery_charge"] = str(delivery_charge)
+        enriched["delivery_distance_km"] = d_meta.get("distance_km")
+        enriched["delivery_lat"] = d_meta.get("lat")
+        enriched["delivery_lng"] = d_meta.get("lng")
+        enriched["is_free_delivery"] = bool(d_meta.get("is_free_delivery", False))
+        enriched["rate_per_km"] = d_meta.get("rate_per_km", DELIVERY_SETTINGS.get("rate_per_km", 10.0))
         enriched["net_total"] = str(net_total)
         return enriched
+
+    @action(detail=False, methods=["get", "post"], permission_classes=[AllowAny])
+    def delivery_settings(self, request):
+        """
+        GET: Returns live delivery settings (rate_per_km, free_min_kg, free_max_km, hub coordinates).
+        POST: Admin-only endpoint to update the per-km delivery charge (Rs/km) in real time.
+        """
+        if request.method == "POST":
+            user = getattr(request, "user", None)
+            if not (
+                user
+                and user.is_authenticated
+                and (getattr(user, "is_staff", False) or getattr(user, "role", "") == "ADMIN")
+            ):
+                return Response(
+                    {"error": "Admin privileges required to update delivery rate."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            raw_rate = request.data.get("rate_per_km")
+            raw_min_kg = request.data.get("free_min_kg")
+            raw_max_km = request.data.get("free_max_km")
+            try:
+                if raw_rate is not None:
+                    DELIVERY_SETTINGS["rate_per_km"] = max(0.0, float(raw_rate))
+                if raw_min_kg is not None:
+                    DELIVERY_SETTINGS["free_min_kg"] = max(0.0, float(raw_min_kg))
+                if raw_max_km is not None:
+                    DELIVERY_SETTINGS["free_max_km"] = max(0.0, float(raw_max_km))
+                _save_discount_cache()
+            except Exception:
+                return Response(
+                    {"error": "Invalid numeric value for delivery settings."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(
+                {
+                    "message": f"Delivery charge updated to रु {DELIVERY_SETTINGS['rate_per_km']} per km!",
+                    "settings": DELIVERY_SETTINGS,
+                }
+            )
+        return Response(DELIVERY_SETTINGS)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -1148,10 +1260,36 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         new_order = serializer.save(buyer=self.request.user, total_price=total_price)
 
-        # Immediately notify Admin(s) by email when a customer places a new order
-        send_admin_order_notification_email(
-            new_order, event_type="NEW_ORDER", actor=self.request.user
-        )
+        try:
+            req_data = self.request.data
+            raw_deliv_charge = req_data.get("delivery_charge", 0)
+            raw_dist_km = req_data.get("delivery_distance_km")
+            raw_lat = req_data.get("delivery_lat")
+            raw_lng = req_data.get("delivery_lng")
+            is_free_deliv = str(req_data.get("is_free_delivery", "")).lower() in ("true", "1", "yes")
+            try:
+                deliv_val = max(Decimal("0.00"), Decimal(str(raw_deliv_charge or 0)).quantize(Decimal("0.01")))
+            except Exception:
+                deliv_val = Decimal("0.00")
+
+            ORDER_DELIVERY_META[new_order.id] = {
+                "delivery_charge": str(deliv_val),
+                "distance_km": float(raw_dist_km) if raw_dist_km not in (None, "") else None,
+                "lat": float(raw_lat) if raw_lat not in (None, "") else None,
+                "lng": float(raw_lng) if raw_lng not in (None, "") else None,
+                "is_free_delivery": is_free_deliv,
+                "rate_per_km": float(DELIVERY_SETTINGS.get("rate_per_km", 10.0)),
+            }
+            _save_discount_cache()
+        except Exception as e:
+            print(f"[Order Delivery Meta Notice]: {e}")
+
+        try:
+            send_admin_order_notification_email(
+                new_order, event_type="NEW_ORDER", actor=self.request.user
+            )
+        except Exception as e:
+            print(f"[Admin New Order Email Notice]: {e}")
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -1208,7 +1346,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.save(update_fields=["total_price"])
 
         disc_amt = ((subtotal * disc_pct) / Decimal("100")).quantize(Decimal("0.01"))
-        net_total = (subtotal - disc_amt).quantize(Decimal("0.01"))
+        d_meta = ORDER_DELIVERY_META.get(order.id) or {}
+        delivery_charge = Decimal(str(d_meta.get("delivery_charge", "0.00") or "0.00")).quantize(
+            Decimal("0.01")
+        )
+        net_total = (subtotal - disc_amt + delivery_charge).quantize(Decimal("0.01"))
 
         # Send the CONFIRMED email ONLY ONCE per order confirmation
         already_sent = order.id in CONFIRMED_EMAIL_SENT_ORDERS

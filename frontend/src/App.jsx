@@ -348,6 +348,298 @@ function compressImageToDataUriAndFile(file, maxDim = 500, quality = 0.85) {
   });
 }
 
+
+// ============================================================================
+// OFFICIAL KRISHIMART HUB COORDINATES: 28°42'11.4"N 80°36'36.1"E
+// Decimal Degrees: 28.703167° N, 80.610028° E (Campus Chowk Area, Dhangadhi)
+// ============================================================================
+const KRISHIMART_HUB = {
+  lat: 28.703167,
+  lng: 80.610028,
+  dms: "28°42'11.4\"N 80°36'36.1\"E",
+  name: "KrishiMart Hub (Campus Chowk, Dhangadhi)",
+};
+
+const DHANGADHI_DELIVERY_LOCATIONS = [
+  { name: "Campus Chowk (Hub Area)", lat: 28.703167, lng: 80.610028, km: 0.5 },
+  { name: "Buddha Chowk, Dhangadhi", lat: 28.6983, lng: 80.6057, km: 0.6 },
+  { name: "Pushpalal Chowk, Dhangadhi", lat: 28.7049, lng: 80.6073, km: 1.0 },
+  { name: "Shivnagar, Dhangadhi", lat: 28.7015, lng: 80.5962, km: 1.0 },
+  { name: "Hasanpur, Dhangadhi", lat: 28.7036, lng: 80.5924, km: 1.3 },
+  { name: "Moti Chowk, Dhangadhi", lat: 28.6963, lng: 80.6121, km: 1.4 },
+  { name: "Bhanu Chowk, Dhangadhi", lat: 28.6987, lng: 80.6136, km: 1.5 },
+  { name: "LN Chowk, Dhangadhi", lat: 28.705, lng: 80.5845, km: 2.2 },
+  { name: "Covered Hall Area, Dhangadhi", lat: 28.7062, lng: 80.5872, km: 2.3 },
+  { name: "Taranagar, Dhangadhi", lat: 28.7118, lng: 80.5842, km: 3.0 },
+  { name: "Chauraha / Traffic Chowk, Dhangadhi", lat: 28.7025, lng: 80.5777, km: 3.1 },
+  { name: "Ratopul, Dhangadhi", lat: 28.705, lng: 80.5756, km: 3.2 },
+  { name: "Santoshi Tole, Dhangadhi", lat: 28.6992, lng: 80.5748, km: 3.4 },
+  { name: "Uttarbehadi, Dhangadhi", lat: 28.7145, lng: 80.5805, km: 3.6 },
+  { name: "Baiyabehadi, Dhangadhi", lat: 28.6975, lng: 80.5712, km: 3.7 },
+  { name: "Shivpuri Dham Area, Dhangadhi", lat: 28.7172, lng: 80.5772, km: 4.0 },
+  { name: "Bishalnagar, Dhangadhi", lat: 28.7082, lng: 80.5665, km: 4.8 },
+  { name: "Milan Chowk, Dhangadhi", lat: 28.7042, lng: 80.5625, km: 5.0 },
+  { name: "Chatakpur, Dhangadhi", lat: 28.7185, lng: 80.5682, km: 5.0 },
+  { name: "Boradandi, Dhangadhi", lat: 28.7226, lng: 80.5658, km: 5.2 },
+  { name: "Rajpur, Dhangadhi", lat: 28.7428, lng: 80.5692, km: 7.5 },
+  { name: "Jugeda, Dhangadhi", lat: 28.6568, lng: 80.625, km: 7.9 },
+  { name: "Geta / Airport Area, Kailali", lat: 28.765, lng: 80.568, km: 13.3 },
+];
+
+function computeHaversineRoadKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const R = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const straightKm = R * c;
+  // Standard urban road network winding factor (1.28x straight line)
+  return Math.max(0.2, Number((straightKm * 1.28).toFixed(1)));
+}
+
+function findNearestDhangadhiArea(lat, lng) {
+  let best = null;
+  let minDist = Infinity;
+  for (const loc of DHANGADHI_DELIVERY_LOCATIONS) {
+    const d = computeHaversineRoadKm(lat, lng, loc.lat, loc.lng);
+    if (d < minDist) {
+      minDist = d;
+      best = loc;
+    }
+  }
+  return { nearest: best, distFromLandmark: minDist };
+}
+
+let leafletLoaderPromise = null;
+function ensureLeafletLoaded() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletLoaderPromise) return leafletLoaderPromise;
+
+  leafletLoaderPromise = new Promise((resolve) => {
+    if (!document.getElementById("krishimart-leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "krishimart-leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(link);
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.async = true;
+    script.onload = () => resolve(window.L || null);
+    script.onerror = () => resolve(null);
+    document.body.appendChild(script);
+  });
+  return leafletLoaderPromise;
+}
+
+function InteractiveDeliveryMap({
+  customerPin,
+  onSelectLocation,
+  freeMaxKm = 7,
+  expanded = false,
+}) {
+  const mapNodeRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const customerMarkerRef = useRef(null);
+  const routeLineRef = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    ensureLeafletLoaded().then((L) => {
+      if (!isMounted || !L || !mapNodeRef.current) return;
+      if (mapInstanceRef.current) return;
+
+      const map = L.map(mapNodeRef.current, {
+        center: [customerPin.lat, customerPin.lng],
+        zoom: 14,
+        scrollWheelZoom: true,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+
+      // 1. KrishiMart Hub Fixed Marker at 28°42'11.4"N 80°36'36.1"E
+      const hubIcon = L.divIcon({
+        className: "km-hub-marker",
+        html: `<div style="background:#14532D;color:#ffffff;border:3px solid #fbbf24;border-radius:999px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">🌱</div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+
+      L.marker([KRISHIMART_HUB.lat, KRISHIMART_HUB.lng], { icon: hubIcon })
+        .addTo(map)
+        .bindPopup(
+          `<strong>🌱 KrishiMart Hub</strong><br/><span style="font-size:11px;">${KRISHIMART_HUB.dms}<br/>Campus Chowk, Dhangadhi</span>`
+        );
+
+      // 2. 7 km Free-Delivery Zone Circle around Hub
+      L.circle([KRISHIMART_HUB.lat, KRISHIMART_HUB.lng], {
+        radius: (freeMaxKm / 1.28) * 1000,
+        color: "#16a34a",
+        weight: 1.5,
+        dashArray: "6 6",
+        fillColor: "#22c55e",
+        fillOpacity: 0.06,
+      }).addTo(map);
+
+      // 3. Customer Draggable Delivery Pin
+      const custIcon = L.divIcon({
+        className: "km-cust-marker",
+        html: `<div style="background:#dc2626;color:#ffffff;border:3px solid #ffffff;border-radius:999px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:17px;box-shadow:0 6px 14px rgba(220,38,38,0.45);cursor:grab;">📍</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      const custMarker = L.marker([customerPin.lat, customerPin.lng], {
+        icon: custIcon,
+        draggable: true,
+      }).addTo(map);
+
+      const routeLine = L.polyline(
+        [
+          [KRISHIMART_HUB.lat, KRISHIMART_HUB.lng],
+          [customerPin.lat, customerPin.lng],
+        ],
+        {
+          color: "#14532D",
+          weight: 4,
+          dashArray: "8 6",
+          opacity: 0.85,
+        }
+      ).addTo(map);
+
+      const handlePinMoved = (lat, lng) => {
+        const cleanLat = Number(lat.toFixed(6));
+        const cleanLng = Number(lng.toFixed(6));
+        const approxKm = computeHaversineRoadKm(
+          KRISHIMART_HUB.lat,
+          KRISHIMART_HUB.lng,
+          cleanLat,
+          cleanLng
+        );
+        const { nearest, distFromLandmark } = findNearestDhangadhiArea(cleanLat, cleanLng);
+        const areaLabel =
+          nearest && distFromLandmark <= 0.9
+            ? nearest.name
+            : nearest
+            ? `Near ${nearest.name}`
+            : `Dropped Pin (${cleanLat.toFixed(4)}, ${cleanLng.toFixed(4)})`;
+
+        onSelectLocation({
+          lat: cleanLat,
+          lng: cleanLng,
+          km: approxKm,
+          label: areaLabel,
+        });
+
+        // Query OSRM free road routing API for exact road polyline & driving distance
+        fetch(
+          `https://router.project-osrm.org/route/v1/driving/${KRISHIMART_HUB.lng},${KRISHIMART_HUB.lat};${cleanLng},${cleanLat}?overview=full&geometries=geojson`
+        )
+          .then((r) => r.json())
+          .then((data) => {
+            const route = data?.routes?.[0];
+            if (route && route.distance) {
+              const osrmKm = Math.max(0.2, Number((route.distance / 1000).toFixed(1)));
+              if (route.geometry?.coordinates && routeLineRef.current) {
+                const latLngs = route.geometry.coordinates.map(([ln, lt]) => [lt, ln]);
+                routeLineRef.current.setLatLngs(latLngs);
+              }
+              onSelectLocation({
+                lat: cleanLat,
+                lng: cleanLng,
+                km: osrmKm,
+                label: areaLabel,
+              });
+            }
+          })
+          .catch(() => {});
+      };
+
+      custMarker.on("dragend", (e) => {
+        const pos = e.target.getLatLng();
+        if (pos) handlePinMoved(pos.lat, pos.lng);
+      });
+
+      map.on("click", (e) => {
+        if (e?.latlng) {
+          custMarker.setLatLng(e.latlng);
+          handlePinMoved(e.latlng.lat, e.latlng.lng);
+        }
+      });
+
+      mapInstanceRef.current = map;
+      customerMarkerRef.current = custMarker;
+      routeLineRef.current = routeLine;
+    });
+
+    return () => {
+      isMounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        customerMarkerRef.current = null;
+        routeLineRef.current = null;
+      }
+    };
+  }, []);
+
+  // Sync marker position and route line whenever customerPin changes externally (e.g. dropdown or GPS)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const marker = customerMarkerRef.current;
+    const line = routeLineRef.current;
+    if (!map || !marker || !line) return;
+
+    marker.setLatLng([customerPin.lat, customerPin.lng]);
+    line.setLatLngs([
+      [KRISHIMART_HUB.lat, KRISHIMART_HUB.lng],
+      [customerPin.lat, customerPin.lng],
+    ]);
+    map.panTo([customerPin.lat, customerPin.lng], { animate: true });
+
+    fetch(
+      `https://router.project-osrm.org/route/v1/driving/${KRISHIMART_HUB.lng},${KRISHIMART_HUB.lat};${customerPin.lng},${customerPin.lat}?overview=full&geometries=geojson`
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        const coords = data?.routes?.[0]?.geometry?.coordinates;
+        if (coords && routeLineRef.current) {
+          routeLineRef.current.setLatLngs(coords.map(([ln, lt]) => [lt, ln]));
+        }
+      })
+      .catch(() => {});
+  }, [customerPin.lat, customerPin.lng]);
+
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      setTimeout(() => mapInstanceRef.current?.invalidateSize(), 150);
+    }
+  }, [expanded]);
+
+  return (
+    <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-600/40 shadow-inner bg-slate-100">
+      <div
+        ref={mapNodeRef}
+        className={`w-full ${expanded ? "h-72 sm:h-96" : "h-48 sm:h-56"} z-10`}
+      />
+      <div className="bg-slate-900/90 text-white px-3 py-1.5 text-[10px] font-semibold flex flex-wrap items-center justify-between gap-2">
+        <span>🌱 Hub: {KRISHIMART_HUB.dms}</span>
+        <span className="text-amber-300 font-bold">
+          👆 Click anywhere on map or drag 📍 pin to set your exact home location
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -415,9 +707,46 @@ export default function App() {
       order.discount_percent !== undefined ? Number(order.discount_percent || 0) : 0;
     const discPct = Math.min(100, Math.max(0, apiDisc > 0 ? apiDisc : localDisc));
     const discAmt = Number(((subtotal * discPct) / 100).toFixed(2));
-    const netTotal = Number(Math.max(0, subtotal - discAmt).toFixed(2));
 
-    return { subtotal, unitPrice, discPct, discAmt, netTotal };
+    let localDelivMeta = {};
+    try {
+      const dMap = JSON.parse(localStorage.getItem("krishimart_order_delivery_meta") || "{}");
+      if (order.id && dMap[order.id]) localDelivMeta = dMap[order.id];
+    } catch {}
+
+    const deliveryCharge = Number(
+      order.delivery_charge !== undefined
+        ? Number(order.delivery_charge || 0)
+        : Number(localDelivMeta.delivery_charge || 0)
+    );
+    const distanceKm =
+      order.delivery_distance_km !== undefined && order.delivery_distance_km !== null
+        ? Number(order.delivery_distance_km)
+        : localDelivMeta.distance_km !== undefined
+        ? Number(localDelivMeta.distance_km)
+        : null;
+    const isFreeDelivery = Boolean(
+      order.is_free_delivery !== undefined
+        ? order.is_free_delivery
+        : localDelivMeta.is_free_delivery
+    );
+    const deliveryLat = order.delivery_lat ?? localDelivMeta.lat ?? null;
+    const deliveryLng = order.delivery_lng ?? localDelivMeta.lng ?? null;
+
+    const netTotal = Number(Math.max(0, subtotal - discAmt + deliveryCharge).toFixed(2));
+
+    return {
+      subtotal,
+      unitPrice,
+      discPct,
+      discAmt,
+      deliveryCharge,
+      distanceKm,
+      isFreeDelivery,
+      deliveryLat,
+      deliveryLng,
+      netTotal,
+    };
   };
 
   // Real Stories & Reviews (with Optional Photo Upload)
@@ -472,9 +801,29 @@ export default function App() {
   const [paymentMethod, setPaymentMethod] = useState("COD");
   const [basketDrawerOpen, setBasketDrawerOpen] = useState(false);
   const [basketRecCategory, setBasketRecCategory] = useState("ALL");
-  const [checkoutAddress, setCheckoutAddress] = useState("");
+  const [checkoutAddress, setCheckoutAddress] = useState("Hasanpur, Dhangadhi");
   const [checkoutPhone, setCheckoutPhone] = useState("");
   const [checkingOut, setCheckingOut] = useState(false);
+
+  // Interactive Map Delivery Pin, Distance & Admin-Editable Rate State
+  const [deliveryRatePerKm, setDeliveryRatePerKm] = useState(() => {
+    try {
+      const saved = localStorage.getItem("krishimart_delivery_rate_per_km");
+      return saved !== null && saved !== "" ? Number(saved) : 10;
+    } catch {
+      return 10;
+    }
+  });
+  const [freeDeliveryMinKg, setFreeDeliveryMinKg] = useState(6);
+  const [freeDeliveryMaxKm, setFreeDeliveryMaxKm] = useState(7);
+  const [customerPin, setCustomerPin] = useState({
+    lat: 28.7036,
+    lng: 80.5924,
+    km: 1.3,
+    label: "Hasanpur, Dhangadhi",
+  });
+  const [mapExpanded, setMapExpanded] = useState(false);
+  const [locatingGps, setLocatingGps] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("krishimart_basket", JSON.stringify(basket));
@@ -703,8 +1052,8 @@ export default function App() {
     try {
       const res = await api.get("/accounts/me/");
       setUser(res.data);
-      setCheckoutAddress(res.data.location || "");
-      setCheckoutPhone(res.data.phone_number || "");
+      setCheckoutAddress((prev) => res.data.location || prev || "Hasanpur, Dhangadhi");
+      setCheckoutPhone((prev) => res.data.phone_number || prev || "");
       setProfileForm({
         full_name: res.data.full_name || "",
         phone_number: res.data.phone_number || "",
@@ -732,14 +1081,67 @@ export default function App() {
   const isVerifiedOrAdmin = Boolean(user && (user.is_admin_verified || isAdmin));
   const isFarmer = Boolean(user && user.role === "FARMER" && !isAdmin);
 
+  const syncDeliverySettings = async () => {
+    try {
+      const res = await api.get("/marketplace/orders/delivery_settings/");
+      if (res.data) {
+        if (res.data.rate_per_km !== undefined) {
+          const r = Number(res.data.rate_per_km);
+          setDeliveryRatePerKm(r);
+          localStorage.setItem("krishimart_delivery_rate_per_km", String(r));
+        }
+        if (res.data.free_min_kg !== undefined) setFreeDeliveryMinKg(Number(res.data.free_min_kg));
+        if (res.data.free_max_km !== undefined) setFreeDeliveryMaxKm(Number(res.data.free_max_km));
+      }
+    } catch {
+      try {
+        const localRate = localStorage.getItem("krishimart_delivery_rate_per_km");
+        if (localRate !== null && localRate !== "") setDeliveryRatePerKm(Number(localRate));
+      } catch {}
+    }
+  };
+
+  useEffect(() => {
+    if (basketDrawerOpen) {
+      syncDeliverySettings();
+    }
+  }, [basketDrawerOpen]);
+
   const loadPublicData = async () => {
+    syncDeliverySettings();
     try {
       const [prodRes, storyRes] = await Promise.all([
         api.get("/marketplace/products/"),
         api.get("/marketplace/stories/"),
       ]);
-      setDbProducts(prodRes.data);
-      setStories(storyRes.data);
+      const liveProds = Array.isArray(prodRes.data) ? prodRes.data : [];
+      setDbProducts(liveProds);
+      setStories(Array.isArray(storyRes.data) ? storyRes.data : []);
+      if (liveProds.length > 0) {
+        setBasket((prev) => {
+          if (!Array.isArray(prev) || prev.length === 0) return prev;
+          const reconciled = prev
+            .map((item) => {
+              const matched =
+                liveProds.find((p) => Number(p.id) === Number(item.id)) ||
+                liveProds.find(
+                  (p) =>
+                    p.name &&
+                    item.name &&
+                    p.name.trim().toLowerCase() === item.name.trim().toLowerCase()
+                );
+              if (!matched) return null;
+              return {
+                ...item,
+                ...matched,
+                id: matched.id,
+                qty: Math.max(1, Number(item.qty || 1)),
+              };
+            })
+            .filter(Boolean);
+          return reconciled;
+        });
+      }
     } catch (err) {
       console.error("Public data sync error:", err);
     } finally {
@@ -863,31 +1265,182 @@ export default function App() {
     );
   };
 
-  const handleCheckoutBasket = async (e) => {
-    e.preventDefault();
-    if (basket.length === 0) return;
-    if (!checkoutPhone.trim() || !checkoutAddress.trim()) {
-      showToast("Please enter your contact phone and delivery address.", "error");
+  const handleDetectLiveGps = () => {
+    if (!navigator.geolocation) {
+      showToast("GPS geolocation is not supported on this browser.", "error");
       return;
     }
+    setLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const approxKm = computeHaversineRoadKm(KRISHIMART_HUB.lat, KRISHIMART_HUB.lng, lat, lng);
+        const { nearest, distFromLandmark } = findNearestDhangadhiArea(lat, lng);
+        const label =
+          nearest && distFromLandmark <= 1.2
+            ? `${nearest.name} (GPS Pin)`
+            : `Live GPS Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        setCustomerPin({ lat, lng, km: approxKm, label });
+        setCheckoutAddress(`${label} — ${approxKm} km from Hub`);
+        setLocatingGps(false);
+        showToast(`GPS location pinned (${approxKm} km from KrishiMart Hub)!`);
+      },
+      () => {
+        setLocatingGps(false);
+        showToast("Could not read GPS location. Please click directly on the map or pick an area.", "error");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // Compute Basket Totals, Weight (in kg), Distance (in km), and Live Delivery Charge
+  const basketTotal = basket.reduce((sum, item) => sum + Number(item.price) * item.qty, 0);
+  const totalBasketItems = basket.reduce((sum, item) => sum + item.qty, 0);
+  const totalBasketWeightKg = basket.reduce((sum, item) => {
+    const u = (item.unit || "kg").toLowerCase();
+    const q = Number(item.qty || 0);
+    if (u === "g") return sum + q / 1000;
+    if (u === "quintal") return sum + q * 100;
+    return sum + q;
+  }, 0);
+
+  const deliveryDistanceKm = Number((customerPin.km || 0).toFixed(1));
+  const rawCalculatedDeliveryFee =
+    deliveryDistanceKm <= 0
+      ? 0
+      : Math.max(
+          Math.round(deliveryRatePerKm),
+          Math.round(deliveryDistanceKm * Number(deliveryRatePerKm || 10))
+        );
+  const isFreeDeliveryUnlocked =
+    totalBasketWeightKg > freeDeliveryMinKg && deliveryDistanceKm <= freeDeliveryMaxKm;
+  const finalDeliveryCharge = isFreeDeliveryUnlocked ? 0 : rawCalculatedDeliveryFee;
+  const basketGrandTotal = Number((basketTotal + finalDeliveryCharge).toFixed(2));
+
+  const handleCheckoutBasket = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!Array.isArray(basket) || basket.length === 0) return;
+
+    const finalPhone = (checkoutPhone || user?.phone_number || "").trim();
+    const finalAddressBase = (
+      checkoutAddress ||
+      customerPin?.label ||
+      user?.location ||
+      "Campus Chowk Area, Dhangadhi"
+    ).trim();
+
+    if (!finalPhone) {
+      showToast("Please enter your contact phone number.", "error");
+      return;
+    }
+
     setCheckingOut(true);
+    let localDelivMap = {};
     try {
-      for (const item of basket) {
-        await api.post("/marketplace/orders/", {
-          product: item.id,
-          quantity: item.qty,
-          delivery_address: `${checkoutAddress.trim()} [${paymentMethod}]`,
-          contact_phone: checkoutPhone.trim(),
-        });
-      }
-      setBasket([]);
-      setBasketDrawerOpen(false);
-      await loadUserData();
-      await loadPublicData();
-      showToast("Order confirmed! Track delivery in My Orders.");
-      setActiveTab("orders");
+      localDelivMap = JSON.parse(
+        localStorage.getItem("krishimart_order_delivery_meta") || "{}"
+      );
     } catch {
-      showToast("Failed to place order.", "error");
+      localDelivMap = {};
+    }
+
+    const itemsSnapshot = [...basket];
+    const succeededIds = new Set();
+    let lastErrorMsg = "";
+
+    try {
+      for (let idx = 0; idx < itemsSnapshot.length; idx++) {
+        const item = itemsSnapshot[idx];
+        // Resolve against live dbProducts so even a stale product ID in localStorage maps to the real DB product
+        const liveMatch =
+          (Array.isArray(dbProducts) ? dbProducts : []).find(
+            (p) => Number(p.id) === Number(item.id)
+          ) ||
+          (Array.isArray(dbProducts) ? dbProducts : []).find(
+            (p) =>
+              p.name &&
+              item.name &&
+              p.name.trim().toLowerCase() === item.name.trim().toLowerCase()
+          );
+
+        const targetProductId = liveMatch ? liveMatch.id : item.id;
+        const orderQty = Math.max(1, Number(item.qty || 1));
+
+        // Attach the delivery charge to the first successfully placed order in the batch
+        const isFirstOrderInBatch = succeededIds.size === 0;
+        const orderDelivCharge = isFirstOrderInBatch ? finalDeliveryCharge : 0;
+        const delivNote = isFreeDeliveryUnlocked
+          ? `(${deliveryDistanceKm} km • FREE Delivery >6kg)`
+          : orderDelivCharge > 0
+          ? `(${deliveryDistanceKm} km • Delivery: रु ${orderDelivCharge})`
+          : `(${deliveryDistanceKm} km)`;
+
+        const cleanFullAddress = `${finalAddressBase} ${delivNote} [${paymentMethod}]`.slice(
+          0,
+          240
+        );
+
+        try {
+          const res = await api.post("/marketplace/orders/", {
+            product: targetProductId,
+            quantity: orderQty,
+            delivery_address: cleanFullAddress,
+            contact_phone: finalPhone.slice(0, 15),
+            delivery_charge: orderDelivCharge,
+            delivery_distance_km: deliveryDistanceKm,
+            delivery_lat: customerPin.lat,
+            delivery_lng: customerPin.lng,
+            is_free_delivery: isFreeDeliveryUnlocked || !isFirstOrderInBatch,
+          });
+
+          succeededIds.add(item.id);
+          if (res.data?.id) {
+            localDelivMap[res.data.id] = {
+              delivery_charge: orderDelivCharge,
+              distance_km: deliveryDistanceKm,
+              lat: customerPin.lat,
+              lng: customerPin.lng,
+              is_free_delivery: isFreeDeliveryUnlocked || !isFirstOrderInBatch,
+              rate_per_km: deliveryRatePerKm,
+            };
+          }
+        } catch (itemErr) {
+          const errData = itemErr.response?.data;
+          if (errData && typeof errData === "object") {
+            const k = Object.keys(errData)[0];
+            const v = Array.isArray(errData[k]) ? errData[k][0] : errData[k];
+            lastErrorMsg = `${k}: ${v}`;
+          } else {
+            lastErrorMsg = "Could not place order for one of the items.";
+          }
+        }
+      }
+
+      try {
+        localStorage.setItem("krishimart_order_delivery_meta", JSON.stringify(localDelivMap));
+      } catch {}
+
+      if (succeededIds.size > 0) {
+        // Clear the basket immediately in both React state and localStorage!
+        setBasket([]);
+        try {
+          localStorage.removeItem("krishimart_basket");
+          localStorage.setItem("krishimart_basket", "[]");
+        } catch {}
+        setBasketDrawerOpen(false);
+        setActiveTab("orders");
+        showToast(
+          isFreeDeliveryUnlocked
+            ? "Order confirmed with FREE Home Delivery! Track in My Orders."
+            : `Order confirmed (Delivery: रु ${finalDeliveryCharge})! Track in My Orders.`
+        );
+        // Refresh orders and products in background
+        loadUserData();
+        loadPublicData();
+      } else {
+        showToast(lastErrorMsg || "Failed to place order. Please check your account verification.", "error");
+      }
     } finally {
       setCheckingOut(false);
     }
@@ -1386,9 +1939,6 @@ export default function App() {
       return Number(b.product.id || 0) - Number(a.product.id || 0);
     })
     .map(({ product }) => product);
-
-  const basketTotal = basket.reduce((sum, item) => sum + Number(item.price) * item.qty, 0);
-  const totalBasketItems = basket.reduce((sum, item) => sum + item.qty, 0);
 
   const totalFarmerEarnings = farmerSales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
   const totalFarmerWeight = farmerSales.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
@@ -3170,7 +3720,18 @@ export default function App() {
             ) : (
               <div className="space-y-3.5">
                 {displayedOrders.map((o) => {
-                  const { subtotal, unitPrice, discPct, discAmt, netTotal } = getCustomerOrderPricing(o);
+                  const {
+                    subtotal,
+                    unitPrice,
+                    discPct,
+                    discAmt,
+                    deliveryCharge,
+                    distanceKm,
+                    isFreeDelivery,
+                    deliveryLat,
+                    deliveryLng,
+                    netTotal,
+                  } = getCustomerOrderPricing(o);
                   const stepIdx =
                     o.status === "DELIVERED"
                       ? 3
@@ -3231,28 +3792,27 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
-                        <div className="text-left sm:text-right">
-                          {discPct > 0 ? (
-                            <>
-                              <p className="text-xs text-slate-400 line-through">
-                                रु {subtotal.toFixed(2)}
-                              </p>
-                              <p className="text-base sm:text-lg font-black text-[#14532D]">
-                                रु {netTotal.toFixed(2)}
-                              </p>
-                              <p className="text-[10px] font-bold text-amber-700">
-                                Saved रु {discAmt.toFixed(2)} ({discPct}%)
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-[10px] uppercase font-bold text-slate-400">
-                                Total Payable
-                              </p>
-                              <p className="text-base sm:text-lg font-black text-[#14532D]">
-                                रु {subtotal.toFixed(2)}
-                              </p>
-                            </>
+                        <div className="text-left sm:text-right space-y-0.5">
+                          <p className="text-[10px] font-bold text-slate-500">
+                            Produce: रु {subtotal.toFixed(2)}{" "}
+                            {discPct > 0 ? `(-${discPct}%)` : ""} •{" "}
+                            <span className="text-emerald-700">
+                              Delivery{distanceKm ? ` (${distanceKm} km)` : ""}:{" "}
+                              {isFreeDelivery ? "FREE" : `+रु ${deliveryCharge.toFixed(2)}`}
+                            </span>
+                          </p>
+                          <p className="text-base sm:text-lg font-black text-[#14532D]">
+                            Total Payable: रु {netTotal.toFixed(2)}
+                          </p>
+                          {deliveryLat && deliveryLng && (
+                            <a
+                              href={`https://www.google.com/maps/dir/${KRISHIMART_HUB.lat},${KRISHIMART_HUB.lng}/${deliveryLat},${deliveryLng}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-700 hover:underline"
+                            >
+                              🗺️ View Delivery Route on Map
+                            </a>
                           )}
                         </div>
 
@@ -5823,19 +6383,157 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* RIGHT 4 COLUMNS: STICKY DARAZ ORDER SUMMARY & EXPRESS CHECKOUT */}
-                  <div className="lg:col-span-4 lg:sticky lg:top-20 bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-md space-y-4">
+                  {/* RIGHT 4 COLUMNS: INTERACTIVE DELIVERY MAP PICKER, ORDER SUMMARY & CHECKOUT */}
+                  <div className="lg:col-span-4 lg:sticky lg:top-20 bg-white rounded-3xl p-4 sm:p-6 border border-slate-200/90 shadow-md space-y-4">
                     <div className="pb-3 border-b border-slate-100 flex items-center justify-between">
-                      <h3 className="text-base sm:text-lg font-black text-slate-900">
-                        Order Summary
-                      </h3>
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#14532D] text-[11px] font-extrabold">
-                        {totalBasketItems} {totalBasketItems === 1 ? "Unit" : "Units"}
+                      <div>
+                        <h3 className="text-base sm:text-lg font-black text-slate-900">
+                          Delivery Map &amp; Order Summary
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Hub: <strong>{KRISHIMART_HUB.dms}</strong>
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-[11px] font-extrabold">
+                        ⚖️ {totalBasketWeightKg.toFixed(1)} kg
                       </span>
                     </div>
 
-                    {/* Bill Breakdown */}
-                    <div className="space-y-2 text-xs sm:text-sm">
+                    {/* > 6 kg within 7 km Free Delivery Progress Banner */}
+                    {isFreeDeliveryUnlocked ? (
+                      <div className="p-3 rounded-2xl bg-emerald-50 border-2 border-emerald-500/40 text-[#14532D] space-y-1">
+                        <div className="flex items-center justify-between text-xs font-black">
+                          <span>🎉 FREE Home Delivery Unlocked!</span>
+                          <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px]">
+                            Saved रु {rawCalculatedDeliveryFee}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-800">
+                          Your basket is <strong>{totalBasketWeightKg.toFixed(1)} kg</strong> (&gt; {freeDeliveryMinKg} kg) within <strong>{deliveryDistanceKm} km</strong> (&le; {freeDeliveryMaxKm} km of Hub).
+                        </p>
+                      </div>
+                    ) : deliveryDistanceKm <= freeDeliveryMaxKm ? (
+                      <div className="p-3 rounded-2xl bg-amber-50/90 border border-amber-200 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-extrabold text-amber-950">
+                          <span>🚚 Free Delivery Progress (&gt; {freeDeliveryMinKg} kg within {freeDeliveryMaxKm} km)</span>
+                          <span>
+                            {totalBasketWeightKg.toFixed(1)} / {freeDeliveryMinKg}+ kg
+                          </span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-amber-200/70 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#14532D] to-emerald-500 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${Math.min(100, Math.round((totalBasketWeightKg / 6.1) * 100))}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-[11px] text-amber-900">
+                          Add <strong>{Math.max(0.1, 6.1 - totalBasketWeightKg).toFixed(1)} kg more</strong> to get{" "}
+                          <strong className="text-[#14532D]">FREE Delivery</strong> and save{" "}
+                          <strong>रु {rawCalculatedDeliveryFee}</strong>!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-[11px] font-semibold">
+                        📏 Your pinned location is <strong>{deliveryDistanceKm} km</strong> from Hub (Free delivery for &gt;{freeDeliveryMinKg} kg applies within {freeDeliveryMaxKm} km). Standard rate: <strong>रु {deliveryRatePerKm}/km</strong>.
+                      </div>
+                    )}
+
+                    {/* INTERACTIVE LEAFLET MAP PICKER STUDIO */}
+                    <div className="space-y-2.5 bg-slate-50/80 p-3 rounded-2xl border border-slate-200/90">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                          <MapPin className="w-4 h-4 text-red-600" />
+                          <span>Choose Delivery Location on Map *</span>
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleDetectLiveGps}
+                            disabled={locatingGps}
+                            className="px-2.5 py-1 rounded-lg bg-[#14532D] hover:bg-[#1B4332] text-white text-[10px] font-extrabold transition cursor-pointer"
+                          >
+                            {locatingGps ? "Locating..." : "📍 Live GPS"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMapExpanded((prev) => !prev)}
+                            className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-[10px] font-bold hover:bg-slate-100 cursor-pointer"
+                          >
+                            {mapExpanded ? "Compact Map" : "⛶ Expand Map"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick Dhangadhi Area / Chowk Selector */}
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const found = DHANGADHI_DELIVERY_LOCATIONS.find(
+                            (l) => l.name === e.target.value
+                          );
+                          if (found) {
+                            setCustomerPin({
+                              lat: found.lat,
+                              lng: found.lng,
+                              km: found.km,
+                              label: found.name,
+                            });
+                            setCheckoutAddress(found.name);
+                          }
+                        }}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                      >
+                        <option value="" disabled>
+                          📍 Quick Jump to Dhangadhi Chowk / Area ({customerPin.label})...
+                        </option>
+                        {DHANGADHI_DELIVERY_LOCATIONS.map((loc) => (
+                          <option key={loc.name} value={loc.name}>
+                            {loc.name} — {loc.km} km (रु {Math.round(loc.km * deliveryRatePerKm)})
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Live Interactive OpenStreetMap */}
+                      <InteractiveDeliveryMap
+                        customerPin={customerPin}
+                        freeMaxKm={freeDeliveryMaxKm}
+                        expanded={mapExpanded}
+                        onSelectLocation={(newPin) => {
+                          setCustomerPin(newPin);
+                          setCheckoutAddress(newPin.label);
+                        }}
+                      />
+
+                      {/* Live Distance & Rate Calculation Pill */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white border border-emerald-200 text-xs">
+                        <div>
+                          <span className="text-slate-500 font-medium">Distance from Hub: </span>
+                          <strong className="text-slate-900">{deliveryDistanceKm} km</strong>
+                          <span className="text-[10px] text-slate-400 ml-1">
+                            (@ रु {deliveryRatePerKm}/km)
+                          </span>
+                        </div>
+                        <div>
+                          {isFreeDeliveryUnlocked ? (
+                            <span className="font-black text-emerald-700">
+                              <span className="line-through text-slate-400 font-normal mr-1">
+                                रु {rawCalculatedDeliveryFee}
+                              </span>
+                              FREE (रु 0)
+                            </span>
+                          ) : (
+                            <span className="font-black text-[#14532D]">
+                              Delivery: + रु {finalDeliveryCharge}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Complete Bill Breakdown */}
+                    <div className="space-y-2 text-xs sm:text-sm pt-1">
                       <div className="flex items-center justify-between text-slate-600">
                         <span>Original MRP Total</span>
                         <span className="font-bold text-slate-800">
@@ -5848,23 +6546,37 @@ export default function App() {
                           <span>- रु {basketDiscountSavings.toLocaleString()}</span>
                         </div>
                       )}
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Hub Packaging & Handling</span>
-                        <span className="text-emerald-700 font-extrabold">FREE</span>
-                      </div>
-                      <div className="pt-2.5 border-t border-slate-200 flex items-baseline justify-between">
-                        <span className="text-sm font-extrabold text-slate-900">
-                          Total Payable
-                        </span>
-                        <span className="text-xl sm:text-2xl font-black text-[#14532D]">
+                      <div className="flex items-center justify-between text-slate-700 font-semibold">
+                        <span>Produce Subtotal ({totalBasketWeightKg.toFixed(1)} kg)</span>
+                        <span className="font-bold text-slate-900">
                           रु {basketTotal.toLocaleString()}
                         </span>
                       </div>
-                      {basketDiscountSavings > 0 && (
-                        <div className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-[#14532D] text-xs font-extrabold text-center">
-                          🎉 You are saving रु {basketDiscountSavings.toLocaleString()} on this order!
-                        </div>
-                      )}
+                      <div className="flex items-center justify-between text-slate-700">
+                        <span>
+                          Home Delivery ({deliveryDistanceKm} km @ रु {deliveryRatePerKm}/km)
+                        </span>
+                        {isFreeDeliveryUnlocked ? (
+                          <span className="text-emerald-700 font-black">
+                            <span className="line-through text-slate-400 font-normal mr-1">
+                              रु {rawCalculatedDeliveryFee}
+                            </span>
+                            FREE
+                          </span>
+                        ) : (
+                          <span className="font-extrabold text-[#14532D]">
+                            + रु {finalDeliveryCharge}
+                          </span>
+                        )}
+                      </div>
+                      <div className="pt-2.5 border-t border-slate-200 flex items-baseline justify-between">
+                        <span className="text-sm font-extrabold text-slate-900">
+                          Grand Total Payable
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black text-[#14532D]">
+                          रु {basketGrandTotal.toLocaleString()}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Checkout Delivery & Payment Form */}
@@ -5885,28 +6597,16 @@ export default function App() {
 
                       <div>
                         <label className="block text-xs font-extrabold text-slate-700 mb-1">
-                          📍 Delivery Address / Location *
+                          📍 Selected Delivery Address / Landmark *
                         </label>
                         <input
                           type="text"
                           required
-                          placeholder="e.g. Ward 4, Dhangadhi or Baneshwor, Kathmandu"
+                          placeholder="House/Tole landmark (auto-filled from map)"
                           value={checkoutAddress}
                           onChange={(e) => setCheckoutAddress(e.target.value)}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50/60 focus:bg-white focus:border-[#14532D] text-xs font-medium outline-none transition"
                         />
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {["Dhangadhi Hub", "Kathmandu", "Pokhara", "Chitwan"].map((loc) => (
-                            <button
-                              key={loc}
-                              type="button"
-                              onClick={() => setCheckoutAddress(loc)}
-                              className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-[#14532D] text-[10px] font-bold transition cursor-pointer"
-                            >
-                              + {loc}
-                            </button>
-                          ))}
-                        </div>
                       </div>
 
                       <div>
@@ -5944,7 +6644,7 @@ export default function App() {
                         <span>
                           {checkingOut
                             ? "Placing Your Order..."
-                            : `Confirm Order • रु ${basketTotal.toLocaleString()}`}
+                            : `Confirm Order • रु ${basketGrandTotal.toLocaleString()}`}
                         </span>
                       </button>
                     </form>
@@ -5952,7 +6652,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* BOTTOM SECTION (DARAZ-STYLE "JUST FOR YOU" RECOMMENDED PRODUCTS LIST INSIDE BASKET) */}
+                            {/* BOTTOM SECTION (DARAZ-STYLE "JUST FOR YOU" RECOMMENDED PRODUCTS LIST INSIDE BASKET) */}
               <div className="pt-4 border-t border-slate-200/90 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
@@ -6126,6 +6826,13 @@ export default function App() {
             initialTab={authModalTab}
             onAuthSuccess={(u) => {
               setUser(u);
+              if (u?.phone_number) setCheckoutPhone(u.phone_number);
+              if (u?.location) setCheckoutAddress(u.location);
+              setProfileForm({
+                full_name: u?.full_name || "",
+                phone_number: u?.phone_number || "",
+                location: u?.location || "",
+              });
               setAuthModalOpen(false);
               showToast(`Welcome, ${u.full_name}!`);
             }}
@@ -6470,8 +7177,16 @@ export default function App() {
                   </div>
                 </div>
               ) : (() => {
-                const { subtotal, unitPrice, discPct, discAmt, netTotal } =
-                  getCustomerOrderPricing(activeSlip);
+                const {
+                  subtotal,
+                  unitPrice,
+                  discPct,
+                  discAmt,
+                  deliveryCharge,
+                  distanceKm,
+                  isFreeDelivery,
+                  netTotal,
+                } = getCustomerOrderPricing(activeSlip);
                 return (
                   <div className="space-y-1.5">
                     <div className="flex justify-between">
@@ -6517,6 +7232,14 @@ export default function App() {
                           <span>- रु {discAmt.toFixed(2)}</span>
                         </div>
                       )}
+                      <div className="flex justify-between text-emerald-800 font-bold">
+                        <span>
+                          Home Delivery{distanceKm ? ` (${distanceKm} km)` : ""}:
+                        </span>
+                        <span>
+                          {isFreeDelivery ? "FREE (रु 0.00)" : `+ रु ${deliveryCharge.toFixed(2)}`}
+                        </span>
+                      </div>
                       <div className="border-t border-dashed border-slate-300 pt-1 flex justify-between text-xs font-black text-[#14532D]">
                         <span>Total Payable:</span>
                         <span>रु {netTotal.toFixed(2)}</span>
@@ -6653,8 +7376,16 @@ export default function App() {
                       y
                     );
                   } else {
-                    const { subtotal, unitPrice, discPct, discAmt, netTotal } =
-                      getCustomerOrderPricing(activeSlip);
+                    const {
+                      subtotal,
+                      unitPrice,
+                      discPct,
+                      discAmt,
+                      deliveryCharge,
+                      distanceKm,
+                      isFreeDelivery,
+                      netTotal,
+                    } = getCustomerOrderPricing(activeSlip);
                     ctx.fillText(
                       `Customer: ${activeSlip.customer_name || user?.full_name || "Verified Buyer"}`,
                       32,
@@ -6679,12 +7410,22 @@ export default function App() {
                     y += 28;
                     ctx.fillText(`Subtotal Amount: रु ${subtotal.toFixed(2)}`, 32, y);
                     if (discPct > 0) {
-                      y += 24;
+                      y += 22;
                       ctx.fillStyle = "#b45309";
                       ctx.font = "bold 12px sans-serif";
                       ctx.fillText(`Discount (${discPct}%): - रु ${discAmt.toFixed(2)}`, 32, y);
                     }
-                    y += 32;
+                    y += 22;
+                    ctx.fillStyle = "#14532D";
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.fillText(
+                      `Home Delivery${distanceKm ? ` (${distanceKm} km)` : ""}: ${
+                        isFreeDelivery ? "FREE (रु 0.00)" : `+ रु ${deliveryCharge.toFixed(2)}`
+                      }`,
+                      32,
+                      y
+                    );
+                    y += 28;
                     ctx.font = "bold 16px sans-serif";
                     ctx.fillStyle = "#14532D";
                     ctx.fillText(

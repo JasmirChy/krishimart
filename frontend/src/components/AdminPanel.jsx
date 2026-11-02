@@ -188,7 +188,7 @@ export default function AdminPanel() {
     return Number(order.original_subtotal || order.total_price || 0);
   };
 
-  // Computes exact Net Payable (after Admin discount %) and Discount Amount for financial analytics
+  // Computes exact Net Payable (after Admin discount % + Home Delivery Charge) for orders & financial analytics
   const getOrderNetFinancials = (order) => {
     const subtotal = getTrueOrderSubtotal(order);
     const apiDisc =
@@ -196,8 +196,65 @@ export default function AdminPanel() {
     const localDisc = Number(orderDiscounts[order?.id] ?? 0);
     const discPct = Math.min(100, Math.max(0, apiDisc > 0 ? apiDisc : localDisc));
     const discAmt = Number(((subtotal * discPct) / 100).toFixed(2));
-    const netPayable = Number(Math.max(0, subtotal - discAmt).toFixed(2));
-    return { subtotal, discPct, discAmt, netPayable };
+
+    let localDelivMeta = {};
+    try {
+      const map = JSON.parse(localStorage.getItem("krishimart_order_delivery_meta") || "{}");
+      if (order?.id && map[order.id]) localDelivMeta = map[order.id];
+    } catch {}
+
+    const deliveryCharge = Number(
+      order?.delivery_charge !== undefined
+        ? Number(order.delivery_charge || 0)
+        : Number(localDelivMeta.delivery_charge || 0)
+    );
+    const distanceKm =
+      order?.delivery_distance_km !== undefined && order?.delivery_distance_km !== null
+        ? Number(order.delivery_distance_km)
+        : localDelivMeta.distance_km !== undefined
+        ? Number(localDelivMeta.distance_km)
+        : null;
+    const isFreeDelivery = Boolean(
+      order?.is_free_delivery !== undefined
+        ? order.is_free_delivery
+        : localDelivMeta.is_free_delivery
+    );
+    const deliveryLat = order?.delivery_lat ?? localDelivMeta.lat ?? null;
+    const deliveryLng = order?.delivery_lng ?? localDelivMeta.lng ?? null;
+
+    const netPayable = Number(Math.max(0, subtotal - discAmt + deliveryCharge).toFixed(2));
+    return {
+      subtotal,
+      discPct,
+      discAmt,
+      deliveryCharge,
+      distanceKm,
+      isFreeDelivery,
+      deliveryLat,
+      deliveryLng,
+      netPayable,
+    };
+  };
+
+  const handleSaveDeliveryRate = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const cleanRate = Math.max(0, Number(deliveryRatePerKm || 0));
+    setSavingDeliveryRate(true);
+    try {
+      localStorage.setItem("krishimart_delivery_rate_per_km", String(cleanRate));
+      await api.post("/marketplace/orders/delivery_settings/", {
+        rate_per_km: cleanRate,
+        free_min_kg: 6,
+        free_max_km: 7,
+      });
+      setDeliveryRatePerKm(cleanRate);
+      showToast(`Delivery rate updated to रु ${cleanRate} per km! (>6 kg within 7 km is FREE)`);
+    } catch {
+      localStorage.setItem("krishimart_delivery_rate_per_km", String(cleanRate));
+      showToast(`Saved delivery rate: रु ${cleanRate} per km!`);
+    } finally {
+      setSavingDeliveryRate(false);
+    }
   };
 
   // Add Product state
@@ -227,6 +284,15 @@ export default function AdminPanel() {
   const [showNewUserConfirm, setShowNewUserConfirm] = useState(false);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
   const [showAddProductForm, setShowAddProductForm] = useState(false);
+  const [deliveryRatePerKm, setDeliveryRatePerKm] = useState(() => {
+    try {
+      const saved = localStorage.getItem("krishimart_delivery_rate_per_km");
+      return saved !== null && saved !== "" ? Number(saved) : 10;
+    } catch {
+      return 10;
+    }
+  });
+  const [savingDeliveryRate, setSavingDeliveryRate] = useState(false);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -264,6 +330,18 @@ export default function AdminPanel() {
 
   // Real-time auto-refresh every 3.5 seconds
   useEffect(() => {
+    api
+      .get("/marketplace/orders/delivery_settings/")
+      .then((res) => {
+        if (res.data && res.data.rate_per_km !== undefined) {
+          const r = Number(res.data.rate_per_km);
+          setDeliveryRatePerKm(r);
+          try {
+            localStorage.setItem("krishimart_delivery_rate_per_km", String(r));
+          } catch {}
+        }
+      })
+      .catch(() => {});
     fetchAllAdminData();
     const interval = setInterval(fetchAllAdminData, 3500);
     return () => clearInterval(interval);
@@ -575,7 +653,11 @@ const handleOrderStatus = async (orderId, status) => {
     const subtotal = Number(order.total_price || 0);
     const discountPct = Math.min(100, Math.max(0, Number(rawDiscountPercent || 0)));
     const discountAmt = subtotal * (discountPct / 100);
-    const netTotal = (subtotal - discountAmt).toFixed(2);
+    const { deliveryCharge, distanceKm, isFreeDelivery } = getOrderNetFinancials(order);
+    const netTotal = (subtotal - discountAmt + deliveryCharge).toFixed(2);
+    const delivLineText = isFreeDelivery
+      ? `FREE (0.00)${distanceKm ? ` [${distanceKm} km]` : ""}`
+      : `+ रु ${deliveryCharge.toFixed(2)}${distanceKm ? ` (${distanceKm} km)` : ""}`;
 
     const paymentMatch = (order.delivery_address || "").match(/\[(COD|ESEWA|KHALTI)\]/i);
     const paymentMode = paymentMatch ? paymentMatch[1].toUpperCase() : "COD";
@@ -774,12 +856,16 @@ const handleOrderStatus = async (orderId, status) => {
 
               <div class="summary-rows">
                 <div class="summary-line">
-                  <span>Subtotal Amount:</span>
+                  <span>Produce Subtotal:</span>
                   <strong>रु ${subtotal.toFixed(2)}</strong>
                 </div>
                 <div class="summary-line" style="color:#b45309;">
                   <span>Discount (${discountPct}%):</span>
                   <strong>- रु ${discountAmt.toFixed(2)}</strong>
+                </div>
+                <div class="summary-line" style="color:#14532d;">
+                  <span>Home Delivery Charge:</span>
+                  <strong>${delivLineText}</strong>
                 </div>
               </div>
 
@@ -814,7 +900,8 @@ const handleOrderStatus = async (orderId, status) => {
     const subtotal = Number(order.total_price || 0);
     const discountPct = Math.min(100, Math.max(0, Number(rawDiscountPercent || 0)));
     const discountAmt = subtotal * (discountPct / 100);
-    const netTotal = (subtotal - discountAmt).toFixed(2);
+    const { deliveryCharge, distanceKm, isFreeDelivery } = getOrderNetFinancials(order);
+    const netTotal = (subtotal - discountAmt + deliveryCharge).toFixed(2);
 
     const paymentMatch = (order.delivery_address || "").match(/\[(COD|ESEWA|KHALTI)\]/i);
     const paymentMode = paymentMatch ? paymentMatch[1].toUpperCase() : "COD";
@@ -897,8 +984,13 @@ const handleOrderStatus = async (orderId, status) => {
 
     ctx.fillStyle = "#b45309";
     ctx.font = "bold 15px Segoe UI, sans-serif";
-    ctx.fillText(`Discount (${discountPct}%):`, 300, 508);
-    ctx.fillText(`- Rs. ${discountAmt.toFixed(2)}`, 490, 508);
+    ctx.fillText(`Discount (${discountPct}%):`, 300, 502);
+    ctx.fillText(`- Rs. ${discountAmt.toFixed(2)}`, 490, 502);
+
+    ctx.fillStyle = "#14532d";
+    ctx.font = "bold 14px Segoe UI, sans-serif";
+    ctx.fillText(`Delivery${distanceKm ? ` (${distanceKm} km)` : ""}:`, 300, 524);
+    ctx.fillText(isFreeDelivery ? "FREE (Rs. 0)" : `+ Rs. ${deliveryCharge.toFixed(2)}`, 490, 524);
 
     // Grand Total Bar
     ctx.fillStyle = "#14532d";
@@ -2729,6 +2821,55 @@ const handleOrderStatus = async (orderId, status) => {
 
         return (
           <div className="space-y-4">
+            {/* Admin Editable Home Delivery Charge (Rs / km) & Hub Coordinate Settings Bar */}
+            <form
+              onSubmit={handleSaveDeliveryRate}
+              className="bg-gradient-to-r from-[#0F2E1E] via-[#14532D] to-[#1B4332] text-white p-4 sm:p-5 rounded-2xl shadow-md border border-emerald-800/50 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+            >
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
+                    🚚 Live Map Delivery Pricing
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/10 border border-white/15 text-emerald-100 text-[11px] font-bold">
+                    📍 Hub: 28°42&apos;11.4&quot;N 80°36&apos;36.1&quot;E (Campus Chowk)
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 text-[11px] font-bold">
+                    🎁 Free Delivery: &gt; 6 kg within 7 km
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-100/90">
+                  Set the per-kilometer home delivery charge calculated automatically from KrishiMart Hub to the customer&apos;s pinned map location:
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0 bg-white/10 backdrop-blur-md p-2 rounded-2xl border border-white/15">
+                <label className="text-xs font-extrabold text-amber-300 pl-2">
+                  Rate per Km (रु):
+                </label>
+                <div className="flex items-center bg-white rounded-xl px-3 py-1.5 border border-emerald-300">
+                  <span className="text-xs font-black text-slate-500 mr-1">रु</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    required
+                    value={deliveryRatePerKm}
+                    onChange={(e) => setDeliveryRatePerKm(e.target.value)}
+                    className="w-16 text-sm font-black text-slate-900 outline-none text-center"
+                  />
+                  <span className="text-[11px] font-bold text-slate-500 ml-1">/ km</span>
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingDeliveryRate}
+                  className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-sm transition cursor-pointer"
+                >
+                  {savingDeliveryRate ? "Saving..." : "✓ Update Rate"}
+                </button>
+              </div>
+            </form>
+
             {/* Search, Filter Pills & Export Bar */}
             <div className="bg-white p-4 sm:p-5 rounded-3xl shadow-sm border border-slate-200 space-y-3.5">
               <div className="flex flex-wrap justify-between items-center gap-3">
@@ -2870,7 +3011,17 @@ const handleOrderStatus = async (orderId, status) => {
                 </p>
               ) : (
                 displayedOrders.map((o) => {
-                  const { subtotal, discPct, discAmt, netPayable } = getOrderNetFinancials(o);
+                  const {
+                    subtotal,
+                    discPct,
+                    discAmt,
+                    deliveryCharge,
+                    distanceKm,
+                    isFreeDelivery,
+                    deliveryLat,
+                    deliveryLng,
+                    netPayable,
+                  } = getOrderNetFinancials(o);
                   const isEmailSent = Boolean(emailSentOrders[o.id]);
                   return (
               <div
@@ -2928,21 +3079,31 @@ const handleOrderStatus = async (orderId, status) => {
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 text-xs pt-0.5">
-                    {discPct > 0 ? (
-                      <>
-                        <span className="text-slate-400 line-through">
-                          Subtotal: रु {subtotal.toFixed(2)}
-                        </span>
-                        <span className="font-black text-[#14532D] text-sm">
-                          Net Payable: रु {netPayable.toFixed(2)}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="font-black text-[#14532D] text-sm">
-                        Total Payable: रु {subtotal.toFixed(2)}
-                      </span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs pt-0.5">
+                    <span className="text-slate-600 font-semibold">
+                      Produce: <strong>रु {subtotal.toFixed(2)}</strong>
+                    </span>
+                    <span>•</span>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[#14532D] font-bold">
+                      🚚 Delivery{distanceKm !== null && !Number.isNaN(distanceKm) ? ` (${distanceKm} km)` : ""}:{" "}
+                      {isFreeDelivery ? "FREE (रु 0)" : `+ रु ${deliveryCharge.toFixed(2)}`}
+                    </span>
+                    {deliveryLat && deliveryLng && (
+                      <a
+                        href={`https://www.google.com/maps/dir/28.703167,80.610028/${deliveryLat},${deliveryLng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-extrabold inline-flex items-center gap-1 transition"
+                        title="Open turn-by-turn route from KrishiMart Hub (28°42'11.4&quot;N 80°36'36.1&quot;E) to customer pin"
+                      >
+                        <MapPin className="w-3 h-3" />
+                        <span>View Map Route</span>
+                      </a>
                     )}
+                    <span>•</span>
+                    <span className="font-black text-[#14532D] text-sm">
+                      Total Payable: रु {netPayable.toFixed(2)}
+                    </span>
                   </div>
                 </div>
                 {/* <div className="flex items-center gap-2">
@@ -4801,7 +4962,8 @@ const handleOrderStatus = async (orderId, status) => {
         const subtotal = getTrueOrderSubtotal(receiptOrder);
         const discountPct = Math.min(100, Math.max(0, Number(receiptDiscount || 0)));
         const discountAmt = subtotal * (discountPct / 100);
-        const finalPayable = (subtotal - discountAmt).toFixed(2);
+        const { deliveryCharge, distanceKm, isFreeDelivery } = getOrderNetFinancials(receiptOrder);
+        const finalPayable = (subtotal - discountAmt + deliveryCharge).toFixed(2);
         const orderForSlip = { ...receiptOrder, total_price: subtotal };
         const isEmailAlreadySent = Boolean(emailSentOrders[receiptOrder.id]);
 
@@ -4898,15 +5060,23 @@ const handleOrderStatus = async (orderId, status) => {
                   </span>
                 </div>
 
-                {/* Subtotal & Discount (%) Breakdown */}
+                {/* Subtotal, Discount (%) & Delivery Charge Breakdown */}
                 <div className="space-y-1 text-xs px-1">
                   <div className="flex justify-between text-slate-600">
-                    <span>Subtotal Amount:</span>
+                    <span>Produce Subtotal:</span>
                     <strong>रु {subtotal.toFixed(2)}</strong>
                   </div>
                   <div className="flex justify-between text-amber-700 font-bold">
                     <span>Discount ({discountPct}%):</span>
                     <span>- रु {discountAmt.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-800 font-bold">
+                    <span>
+                      Home Delivery{distanceKm !== null && !Number.isNaN(distanceKm) ? ` (${distanceKm} km)` : ""}:
+                    </span>
+                    <span>
+                      {isFreeDelivery ? "FREE (रु 0.00)" : `+ रु ${deliveryCharge.toFixed(2)}`}
+                    </span>
                   </div>
                 </div>
 
