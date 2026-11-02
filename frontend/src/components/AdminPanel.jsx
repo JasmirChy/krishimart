@@ -23,6 +23,81 @@ import {
 } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
+
+function resolveMediaUrl(rawUrl, userId = null) {
+  if (userId) {
+    try {
+      const cached = localStorage.getItem(`krishimart_avatar_${userId}`);
+      if (cached && cached.startsWith("data:image/")) return cached;
+    } catch {}
+  }
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("data:image/") || trimmed.startsWith("blob:")) return trimmed;
+
+  const mediaIdx = trimmed.indexOf("/media/");
+  if (mediaIdx !== -1) {
+    const mediaPath = trimmed.slice(mediaIdx);
+    const cleanBase = (BACKEND_URL || "").replace(/\/+$/, "");
+    return `${cleanBase}${mediaPath}`;
+  }
+  if (trimmed.startsWith("http://")) {
+    if (
+      trimmed.includes("onrender.com") ||
+      (typeof window !== "undefined" && window.location.protocol === "https:")
+    ) {
+      return trimmed.replace(/^http:\/\//i, "https://");
+    }
+    if (trimmed.includes("127.0.0.1:8000") || trimmed.includes("localhost:8000")) {
+      const pathPart = trimmed.replace(/^https?:\/\/[^/]+/i, "");
+      return `${(BACKEND_URL || "").replace(/\/+$/, "")}${pathPart}`;
+    }
+    return trimmed;
+  }
+  if (trimmed.startsWith("https://")) return trimmed;
+  const cleanBase = (BACKEND_URL || "").replace(/\/+$/, "");
+  return `${cleanBase}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+}
+
+function fileToCompressedDataUri(file, maxDim = 700, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let w = img.width || 400;
+          let h = img.height || 400;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUri = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUri);
+        } catch {
+          resolve(ev.target?.result || null);
+        }
+      };
+      img.onerror = () => resolve(ev.target?.result || null);
+      img.src = ev.target?.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function AdminPanel() {
   const [subTab, setSubTab] = useState("users");
   const [users, setUsers] = useState([]);
@@ -1488,9 +1563,7 @@ const handleOrderStatus = async (orderId, status) => {
                         {u.profile_picture ? (
                           <img
                             src={
-                              u.profile_picture.startsWith("http")
-                                ? u.profile_picture
-                                : `${BACKEND_URL}${u.profile_picture}`
+                              resolveMediaUrl(u.profile_picture, u.id)
                             }
                             alt={u.full_name}
                             className="w-full h-full object-cover"
@@ -1665,9 +1738,7 @@ const handleOrderStatus = async (orderId, status) => {
                         {sub.seller_avatar ? (
                           <img
                             src={
-                              sub.seller_avatar.startsWith("http")
-                                ? sub.seller_avatar
-                                : `${BACKEND_URL}${sub.seller_avatar}`
+                              resolveMediaUrl(sub.seller_avatar, sub.seller)
                             }
                             alt={sub.seller_name}
                             className="w-full h-full object-cover"
@@ -1703,7 +1774,7 @@ const handleOrderStatus = async (orderId, status) => {
 
                   {sub.image && (
                     <img
-                      src={sub.image.startsWith("http") ? sub.image : `${BACKEND_URL}${sub.image}`}
+                      src={resolveMediaUrl(sub.image)}
                       alt={sub.vegetable_name}
                       className="w-full h-44 object-cover rounded-2xl border border-slate-100"
                     />
@@ -1974,9 +2045,7 @@ const handleOrderStatus = async (orderId, status) => {
                           {p.farmer_avatar ? (
                             <img
                               src={
-                                p.farmer_avatar.startsWith("http")
-                                  ? p.farmer_avatar
-                                  : `${BACKEND_URL}${p.farmer_avatar}`
+                                resolveMediaUrl(p.farmer_avatar, p.farmer)
                               }
                               alt={p.farmer_name}
                               className="w-full h-full object-cover"
@@ -2178,9 +2247,7 @@ const handleOrderStatus = async (orderId, status) => {
                         {st.author_avatar ? (
                           <img
                             src={
-                              st.author_avatar.startsWith("http")
-                                ? st.author_avatar
-                                : `${BACKEND_URL}${st.author_avatar}`
+                              resolveMediaUrl(st.author_avatar, st.author)
                             }
                             alt={st.author_name}
                             className="w-full h-full object-cover"
@@ -2207,9 +2274,7 @@ const handleOrderStatus = async (orderId, status) => {
                     {st.image && (
                       <img
                         src={
-                          st.image.startsWith("http")
-                            ? st.image
-                            : `${BACKEND_URL}${st.image}`
+                          resolveMediaUrl(st.image)
                         }
                         alt={st.title || "Story or review photo"}
                         className="w-full h-44 object-cover rounded-2xl border border-slate-200"
@@ -3063,9 +3128,7 @@ const handleOrderStatus = async (orderId, status) => {
                               {u.profile_picture ? (
                                 <img
                                   src={
-                                    u.profile_picture.startsWith("http")
-                                      ? u.profile_picture
-                                      : `${BACKEND_URL}${u.profile_picture}`
+                                    resolveMediaUrl(u.profile_picture, u.id)
                                   }
                                   alt={u.full_name}
                                   className="w-full h-full object-cover"
@@ -3170,9 +3233,7 @@ const handleOrderStatus = async (orderId, status) => {
                           {selectedUser.profile_picture ? (
                             <img
                               src={
-                                selectedUser.profile_picture.startsWith("http")
-                                  ? selectedUser.profile_picture
-                                  : `${BACKEND_URL}${selectedUser.profile_picture}`
+                                resolveMediaUrl(selectedUser.profile_picture, selectedUser.id)
                               }
                               alt={selectedUser.full_name}
                               className="w-full h-full object-cover"

@@ -1,10 +1,13 @@
+import base64
 import json
+import mimetypes
 import random
 import threading
 import urllib.request
 from urllib.error import HTTPError, URLError
 from django.conf import settings
 from django.core.mail import send_mail
+from django.db import connection
 from django.shortcuts import render
 from django.utils import timezone
 from decouple import config
@@ -20,6 +23,110 @@ from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 
 # In-memory OTP storage: { "user_email": { "code": "123456", "expires_at": timestamp } }
 PASSWORD_RESET_OTPS = {}
+
+# In-memory cache backed by PostgreSQL table `krishimart_media_store` so avatars survive Render container restarts
+USER_AVATAR_CACHE = {}
+_MEDIA_TABLE_READY = False
+
+
+def _ensure_media_table():
+    global _MEDIA_TABLE_READY
+    if _MEDIA_TABLE_READY:
+        return
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS krishimart_media_store (
+                    media_key VARCHAR(120) PRIMARY KEY,
+                    data_uri TEXT NOT NULL
+                );
+                """
+            )
+            cursor.execute(
+                "SELECT media_key, data_uri FROM krishimart_media_store WHERE media_key LIKE 'user_avatar_%';"
+            )
+            for mkey, duri in cursor.fetchall():
+                try:
+                    uid = int(str(mkey).replace("user_avatar_", ""))
+                    if duri:
+                        USER_AVATAR_CACHE[uid] = duri
+                except Exception:
+                    pass
+        _MEDIA_TABLE_READY = True
+    except Exception as e:
+        print(f"[Media Store Init Notice]: {e}")
+
+
+def save_user_avatar_to_db(user_id, data_uri):
+    if not user_id or not data_uri or not str(data_uri).startswith("data:image/"):
+        return
+    _ensure_media_table()
+    uid = int(user_id)
+    USER_AVATAR_CACHE[uid] = str(data_uri)
+    mkey = f"user_avatar_{uid}"
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM krishimart_media_store WHERE media_key = %s;",
+                [mkey],
+            )
+            cursor.execute(
+                "INSERT INTO krishimart_media_store (media_key, data_uri) VALUES (%s, %s);",
+                [mkey, str(data_uri)],
+            )
+    except Exception as e:
+        print(f"[Media Store Save Notice]: {e}")
+
+
+def file_to_data_uri(uploaded_file):
+    try:
+        uploaded_file.seek(0)
+        raw_bytes = uploaded_file.read()
+        uploaded_file.seek(0)
+        if not raw_bytes:
+            return None
+        mime, _ = mimetypes.guess_type(getattr(uploaded_file, "name", "") or "avatar.jpg")
+        if not mime or not mime.startswith("image/"):
+            mime = "image/jpeg"
+        b64 = base64.b64encode(raw_bytes).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return None
+
+
+def enrich_user_payload(user_data, user_obj=None):
+    """
+    Ensures user's profile_picture is always available on mobile & desktop (even after Render container restarts)
+    by serving the PostgreSQL-persisted data:image/... URI or upgrading insecure http:// links to https://.
+    """
+    if not isinstance(user_data, dict):
+        return user_data
+    _ensure_media_table()
+    uid = user_data.get("id") or (getattr(user_obj, "id", None) if user_obj else None)
+    if uid:
+        uid = int(uid)
+        cached_uri = USER_AVATAR_CACHE.get(uid)
+        if cached_uri:
+            user_data["profile_picture"] = cached_uri
+            return user_data
+
+        # If not yet in PostgreSQL media store, check if the file still exists on local disk and back it up
+        if user_obj and getattr(user_obj, "profile_picture", None):
+            try:
+                duri = file_to_data_uri(user_obj.profile_picture.file)
+                if duri:
+                    save_user_avatar_to_db(uid, duri)
+                    user_data["profile_picture"] = duri
+                    return user_data
+            except Exception:
+                pass
+
+    pic = user_data.get("profile_picture")
+    if isinstance(pic, str) and pic.startswith("http://") and "onrender.com" in pic:
+        user_data["profile_picture"] = pic.replace("http://", "https://", 1)
+    return user_data
+
 
 # Official KrishiMart Google Apps Script Web App URL (Port 443 HTTPS -> Native Gmail Delivery)
 DEFAULT_GOOGLE_SCRIPT_URL = (
@@ -87,7 +194,6 @@ def send_otp_via_brevo_api(to_email, recipient_name, otp_code, html_message, pla
 
     if raw_key.startswith("ey"):
         try:
-            import base64
             decoded_json = json.loads(base64.b64decode(raw_key).decode("utf-8"))
             api_key = decoded_json.get("api_key", raw_key)
         except Exception:
@@ -271,10 +377,20 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+
+        avatar_uri = request.data.get("avatar_data_uri")
+        if avatar_uri and str(avatar_uri).startswith("data:image/"):
+            save_user_avatar_to_db(user.id, avatar_uri)
+        elif "profile_picture" in request.FILES:
+            duri = file_to_data_uri(request.FILES["profile_picture"])
+            if duri:
+                save_user_avatar_to_db(user.id, duri)
+
+        user_payload = enrich_user_payload(UserSerializer(user).data, user)
         return Response(
             {
                 "message": "Registration successful! Your account is now pending Admin verification.",
-                "user": UserSerializer(user).data,
+                "user": user_payload,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -314,12 +430,12 @@ class LoginView(APIView):
             subject = f"Your KrishiMart Verification Code: {otp_code}"
 
             plain_message = (
-                f"Namaste {recipient_name},\\n\\n"
-                f"We received a request to reset your KrishiMart account password. Use the verification code below:\\n\\n"
-                f"   {otp_code}\\n\\n"
-                f"This code is valid for 10 minutes. If you did not request this, you can safely ignore this email.\\n\\n"
-                f"KrishiMart Agricultural Marketplace\\n"
-                f"Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal\\n"
+                f"Namaste {recipient_name},\n\n"
+                f"We received a request to verify and update your KrishiMart account password. Use the verification code below:\n\n"
+                f"   {otp_code}\n\n"
+                f"This code is valid for 10 minutes. If you did not request this, you can safely ignore this email.\n\n"
+                f"KrishiMart Agricultural Marketplace\n"
+                f"Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal\n"
                 f"support@krishimart.com.np • +977-1-4423456"
             )
 
@@ -346,9 +462,9 @@ class LoginView(APIView):
                     <div class="sub" style="font-size: 12px; color: #a7f3d0; margin-top: 4px;">किसान र उपभोक्ता जोड्ने डिजिटल बजार</div>
                   </div>
                   <div class="content" style="padding: 32px 24px; text-align: center; color: #1e293b;">
-                    <h2 style="font-size: 18px; font-weight: 700; margin-top: 0; color: #0f172a;">Password Reset Verification</h2>
+                    <h2 style="font-size: 18px; font-weight: 700; margin-top: 0; color: #0f172a;">Password Security Verification</h2>
                     <p style="font-size: 13px; color: #475569; line-height: 1.5;">
-                      Namaste <strong>{recipient_name}</strong>, we received a request to reset your KrishiMart account password. Use the verification code below:
+                      Namaste <strong>{recipient_name}</strong>, use the 6-digit verification code below to confirm your KrishiMart password change:
                     </p>
                     <div class="otp-box" style="background: #f0fdf4; border: 2px dashed #16a34a; border-radius: 12px; padding: 16px 24px; font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #14532D; margin: 24px auto; display: inline-block;">{otp_code}</div>
                     <p style="font-size: 12px; color: #64748b; margin-bottom: 0;">
@@ -365,10 +481,7 @@ class LoginView(APIView):
             </html>
             """
 
-            # 1. Primary: Send via Google Apps Script Web App over Port 443 HTTPS (Native Gmail -> Primary Inbox)
             sent, info = send_otp_via_google_script(email, subject, html_message, plain_message)
-
-            # 2. Backup: If Google Script is unreachable, try Brevo HTTPS API
             if not sent:
                 print(f"[Google Script notice]: {info}. Trying Brevo HTTPS API backup...")
                 sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
@@ -438,14 +551,18 @@ class LoginView(APIView):
 
             return Response(
                 {
-                    "message": "Password reset successfully! You can now sign in with your new password."
+                    "message": "Password updated successfully with 6-digit OTP verification!"
                 },
                 status=status.HTTP_200_OK,
             )
 
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+        resp_data = dict(serializer.validated_data)
+        if "user" in resp_data and isinstance(resp_data["user"], dict):
+            u_obj = User.objects.filter(id=resp_data["user"].get("id")).first()
+            resp_data["user"] = enrich_user_payload(resp_data["user"], u_obj)
+        return Response(resp_data, status=status.HTTP_200_OK)
 
 
 class CurrentUserView(generics.RetrieveUpdateAPIView):
@@ -455,14 +572,152 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(enrich_user_payload(dict(serializer.data), instance))
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+
+        # Persist base64 avatar in PostgreSQL so it works across all mobile & desktop devices even after Render restarts
+        avatar_uri = request.data.get("avatar_data_uri")
+        if avatar_uri and str(avatar_uri).startswith("data:image/"):
+            save_user_avatar_to_db(instance.id, avatar_uri)
+        elif "profile_picture" in request.FILES:
+            duri = file_to_data_uri(request.FILES["profile_picture"])
+            if duri:
+                save_user_avatar_to_db(instance.id, duri)
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        return Response(enrich_user_payload(dict(serializer.data), instance))
+
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        action_type = request.data.get("action")
         current_password = request.data.get("current_password", "")
         new_password = request.data.get("new_password", "")
+        otp = (request.data.get("otp") or "").strip()
+        skip_current = str(request.data.get("skip_current_password", "")).lower() in ("true", "1", "yes")
+        email = (getattr(request.user, "email", "") or "").strip().lower()
 
+        # 1. Step 1: Request 6-digit OTP to change password from Profile Page
+        if action_type == "send_otp":
+            if not skip_current:
+                if not current_password or not request.user.check_password(current_password):
+                    return Response(
+                        {"error": "Current password is incorrect."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if len(new_password) < 8:
+                return Response(
+                    {"error": "New password must be at least 8 characters."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not email or "@" not in email:
+                return Response(
+                    {"error": "No valid email address is linked to your account."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            otp_code = f"{random.randint(100000, 999999)}"
+            PASSWORD_RESET_OTPS[email] = {
+                "code": otp_code,
+                "expires_at": timezone.now().timestamp() + (10 * 60),
+            }
+
+            recipient_name = request.user.full_name or "Member"
+            subject = f"Your KrishiMart Password Change OTP: {otp_code}"
+            plain_message = (
+                f"Namaste {recipient_name},\n\n"
+                f"Use this 6-digit verification code to confirm changing your KrishiMart password:\n\n"
+                f"   {otp_code}\n\n"
+                f"Valid for 10 minutes.\n\n"
+                f"KrishiMart Agricultural Marketplace\n"
+                f"Dhangadhi Hub, Kailali & Kathmandu Valley, Nepal"
+            )
+            html_message = f"""
+            <!DOCTYPE html>
+            <html>
+              <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px;">
+                <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                  <div style="background: #14532D; padding: 24px; text-align: center; color: #ffffff;">
+                    <h1 style="font-size: 24px; font-weight: 900; margin: 0; color: #ffffff;">🌱 KrishiMart Nepal</h1>
+                    <div style="font-size: 12px; color: #a7f3d0; margin-top: 4px;">किसान र उपभोक्ता जोड्ने डिजिटल बजार</div>
+                  </div>
+                  <div style="padding: 32px 24px; text-align: center; color: #1e293b;">
+                    <h2 style="font-size: 18px; font-weight: 700; margin-top: 0; color: #0f172a;">Confirm Password Change</h2>
+                    <p style="font-size: 13px; color: #475569; line-height: 1.5;">
+                      Namaste <strong>{recipient_name}</strong>, enter this 6-digit security code on your Profile page to complete your password update:
+                    </p>
+                    <div style="background: #f0fdf4; border: 2px dashed #16a34a; border-radius: 12px; padding: 16px 24px; font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #14532D; margin: 24px auto; display: inline-block;">{otp_code}</div>
+                    <p style="font-size: 12px; color: #64748b; margin-bottom: 0;">
+                      This code is valid for <strong>10 minutes</strong>.
+                    </p>
+                  </div>
+                  <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; font-size: 11px; color: #64748b; text-align: center; line-height: 1.5;">
+                    KrishiMart Agricultural Marketplace • Dhangadhi Hub, Kailali, Nepal
+                  </div>
+                </div>
+              </body>
+            </html>
+            """
+
+            sent, info = send_otp_via_google_script(email, subject, html_message, plain_message)
+            if not sent:
+                sent, info = send_otp_via_brevo_api(email, recipient_name, otp_code, html_message, plain_message)
+            if not sent:
+                return Response(
+                    {"error": f"Could not send verification OTP: {info}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            return Response(
+                {
+                    "message": f"A 6-digit verification code was sent to {email}.",
+                    "email": email,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # 2. Step 2: Verify 6-digit OTP and update password
+        if action_type == "verify_otp_and_change" or otp:
+            if len(new_password) < 8:
+                return Response(
+                    {"error": "New password must be at least 8 characters."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            cached = PASSWORD_RESET_OTPS.get(email)
+            if not cached:
+                return Response(
+                    {"error": "No active OTP found for your account. Please request a new 6-digit code."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if timezone.now().timestamp() > cached["expires_at"]:
+                PASSWORD_RESET_OTPS.pop(email, None)
+                return Response(
+                    {"error": "This 6-digit OTP code has expired. Please request a new one."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if cached["code"] != otp:
+                return Response(
+                    {"error": "Invalid 6-digit OTP code. Please check your email and try again."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            request.user.set_password(new_password)
+            request.user.save()
+            PASSWORD_RESET_OTPS.pop(email, None)
+            return Response({"message": "Password updated successfully with OTP verification!"})
+
+        # 3. Direct fallback if called without OTP
         if not request.user.check_password(current_password):
             return Response(
                 {"error": "Current password is incorrect."},
@@ -487,6 +742,13 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsSiteAdmin]
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        user_map = {u.id: u for u in queryset}
+        data = [enrich_user_payload(dict(item), user_map.get(item.get("id"))) for item in serializer.data]
+        return Response(data)
+
     @action(detail=True, methods=["post"])
     def toggle_verification(self, request, pk=None):
         user = self.get_object()
@@ -500,7 +762,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         return Response(
             {
                 "message": f"User {user.full_name} is now {status_label}.",
-                "user": UserSerializer(user).data,
+                "user": enrich_user_payload(UserSerializer(user).data, user),
             }
         )
 

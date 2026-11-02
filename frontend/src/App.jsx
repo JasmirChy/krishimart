@@ -102,26 +102,123 @@ const CATEGORIES_SHOWCASE = [
   },
 ];
 
-function getProductImage(product) {
-  if (product.image) {
-    return product.image.startsWith("http")
-      ? product.image
-      : `${BACKEND_URL}${product.image}`;
+function resolveMediaUrl(rawUrl, userId = null) {
+  if (userId) {
+    try {
+      const cached = localStorage.getItem(`krishimart_avatar_${userId}`);
+      if (cached && cached.startsWith("data:image/")) return cached;
+    } catch {}
   }
-  const name = (product.name || "").toLowerCase();
-  if (name.includes("tomato"))
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("data:image/") || trimmed.startsWith("blob:")) return trimmed;
+
+  const mediaIdx = trimmed.indexOf("/media/");
+  if (mediaIdx !== -1) {
+    const mediaPath = trimmed.slice(mediaIdx);
+    const cleanBase = (BACKEND_URL || "").replace(/\/+$/, "");
+    return `${cleanBase}${mediaPath}`;
+  }
+  if (trimmed.startsWith("http://")) {
+    if (
+      trimmed.includes("onrender.com") ||
+      (typeof window !== "undefined" && window.location.protocol === "https:")
+    ) {
+      return trimmed.replace(/^http:\/\//i, "https://");
+    }
+    if (trimmed.includes("127.0.0.1:8000") || trimmed.includes("localhost:8000")) {
+      const pathPart = trimmed.replace(/^https?:\/\/[^/]+/i, "");
+      return `${(BACKEND_URL || "").replace(/\/+$/, "")}${pathPart}`;
+    }
+    return trimmed;
+  }
+  if (trimmed.startsWith("https://")) return trimmed;
+  const cleanBase = (BACKEND_URL || "").replace(/\/+$/, "");
+  return `${cleanBase}${trimmed.startsWith("/") ? "" : "/"}${trimmed}`;
+}
+
+function getFallbackProductImage(product) {
+  const name = ((product?.name || "") + " " + (product?.category || "")).toLowerCase();
+  if (name.includes("tomato") || name.includes("golbheda"))
     return "https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=700&q=80";
-  if (name.includes("apple"))
+  if (name.includes("apple") || name.includes("syau"))
     return "https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?auto=format&fit=crop&w=700&q=80";
-  if (name.includes("potato"))
+  if (name.includes("potato") || name.includes("aalu"))
     return "https://images.unsplash.com/photo-1518977676601-b53f82aba655?auto=format&fit=crop&w=700&q=80";
-  if (name.includes("rice") || name.includes("marsi"))
+  if (name.includes("rice") || name.includes("marsi") || name.includes("chamal") || name.includes("grain"))
     return "https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=700&q=80";
-  if (name.includes("chili") || name.includes("akabare"))
+  if (name.includes("chili") || name.includes("akabare") || name.includes("khursani") || name.includes("spice"))
     return "https://images.unsplash.com/photo-1588252303782-cb80119abd6d?auto=format&fit=crop&w=700&q=80";
-  if (name.includes("oil") || name.includes("mustard"))
+  if (name.includes("oil") || name.includes("mustard") || name.includes("tori") || name.includes("ghee"))
     return "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=700&q=80";
+  if (name.includes("honey") || name.includes("maha") || name.includes("dairy"))
+    return "https://images.unsplash.com/photo-1587049352847-4a222e784d38?auto=format&fit=crop&w=700&q=80";
+  if (name.includes("cauliflower") || name.includes("kauli") || name.includes("cabbage"))
+    return "https://images.unsplash.com/photo-1568584711075-3d021a7c3ca3?auto=format&fit=crop&w=700&q=80";
+  if (name.includes("onion") || name.includes("pyaj") || name.includes("garlic"))
+    return "https://images.unsplash.com/photo-1508747703725-719777637510?auto=format&fit=crop&w=700&q=80";
+  if (name.includes("banana") || name.includes("orange") || name.includes("fruit"))
+    return "https://images.unsplash.com/photo-1619566636858-adf3ef46400b?auto=format&fit=crop&w=700&q=80";
   return "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=700&q=80";
+}
+
+function getProductImage(product) {
+  if (product?.image) {
+    const resolved = resolveMediaUrl(product.image);
+    if (resolved) return resolved;
+  }
+  return getFallbackProductImage(product);
+}
+
+function compressImageToDataUriAndFile(file, maxDim = 500, quality = 0.85) {
+  return new Promise((resolve) => {
+    if (!file) return resolve({ dataUri: null, compressedFile: null });
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let w = img.width || 400;
+          let h = img.height || 400;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUri = canvas.toDataURL("image/jpeg", quality);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const cleanName = (file.name || "photo.jpg").replace(/\.[^.]+$/, "") + ".jpg";
+                const compFile = new File([blob], cleanName, { type: "image/jpeg" });
+                resolve({ dataUri, compressedFile: compFile });
+              } else {
+                resolve({ dataUri, compressedFile: file });
+              }
+            },
+            "image/jpeg",
+            quality
+          );
+        } catch {
+          resolve({ dataUri: ev.target?.result || null, compressedFile: file });
+        }
+      };
+      img.onerror = () => resolve({ dataUri: ev.target?.result || null, compressedFile: file });
+      img.src = ev.target?.result;
+    };
+    reader.onerror = () => resolve({ dataUri: null, compressedFile: file });
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function App() {
@@ -255,8 +352,9 @@ export default function App() {
     localStorage.setItem("krishimart_basket", JSON.stringify(basket));
   }, [basket]);
 
-  // Profile & Password Modal State
+  // Profile Page & OTP Password Security State
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({
     full_name: "",
     phone_number: "",
@@ -264,12 +362,22 @@ export default function App() {
   });
   const [profileAvatarFile, setProfileAvatarFile] = useState(null);
   const [profileAvatarPreview, setProfileAvatarPreview] = useState(null);
+  const [profileAvatarDataUri, setProfileAvatarDataUri] = useState(null);
+  const [avatarLoadError, setAvatarLoadError] = useState(false);
+
   const [passwordForm, setPasswordForm] = useState({
     current_password: "",
     new_password: "",
+    confirm_password: "",
+    otp: "",
   });
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  const [skipCurrentPasswordForOtp, setSkipCurrentPasswordForOtp] = useState(false);
+  const [profileOtpSent, setProfileOtpSent] = useState(false);
+  const [sendingProfileOtp, setSendingProfileOtp] = useState(false);
+  const [verifyingProfileOtp, setVerifyingProfileOtp] = useState(false);
 
   // Farmer Wholesale Portal State
   const [mySubmissions, setMySubmissions] = useState([]);
@@ -372,9 +480,9 @@ export default function App() {
   // Push history entry for Profile / Change Password Modal
   useEffect(() => {
     if (profileModalOpen) {
-      syncOpenLayer("profile");
-    } else {
-      syncCloseLayer("profile");
+      setQuickViewProduct(null);
+      setActiveTab("profile");
+      setProfileModalOpen(false);
     }
   }, [profileModalOpen]);
 
@@ -686,6 +794,8 @@ export default function App() {
       }
       if (storyImageFile instanceof File) {
         formData.append("image", storyImageFile);
+        const { dataUri: stUri } = await compressImageToDataUriAndFile(storyImageFile, 700, 0.82);
+        if (stUri) formData.append("image_data_uri", stUri);
       }
 
       await api.post("/marketplace/stories/", formData);
@@ -705,8 +815,19 @@ export default function App() {
     }
   };
 
+  const handleSelectProfilePhoto = async (e) => {
+    const rawFile = e.target.files?.[0];
+    if (!rawFile) return;
+    setAvatarLoadError(false);
+    const { dataUri, compressedFile } = await compressImageToDataUriAndFile(rawFile, 500, 0.86);
+    setProfileAvatarFile(compressedFile || rawFile);
+    setProfileAvatarDataUri(dataUri);
+    setProfileAvatarPreview(dataUri || URL.createObjectURL(rawFile));
+  };
+
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
+    setSavingProfile(true);
     try {
       const formData = new FormData();
       formData.append("full_name", profileForm.full_name.trim());
@@ -715,13 +836,31 @@ export default function App() {
       if (profileAvatarFile instanceof File) {
         formData.append("profile_picture", profileAvatarFile);
       }
+      if (profileAvatarDataUri && profileAvatarDataUri.startsWith("data:image/")) {
+        formData.append("avatar_data_uri", profileAvatarDataUri);
+        if (user?.id) {
+          try {
+            localStorage.setItem(`krishimart_avatar_${user.id}`, profileAvatarDataUri);
+          } catch {}
+        }
+      }
 
       const res = await api.patch("/accounts/me/", formData);
-      setUser(res.data);
+      const updatedUser = {
+        ...res.data,
+        profile_picture: profileAvatarDataUri || res.data.profile_picture,
+      };
+      if (updatedUser.id && updatedUser.profile_picture?.startsWith("data:image/")) {
+        try {
+          localStorage.setItem(`krishimart_avatar_${updatedUser.id}`, updatedUser.profile_picture);
+        } catch {}
+      }
+      setUser(updatedUser);
+      setAvatarLoadError(false);
       setProfileAvatarFile(null);
       setProfileAvatarPreview(null);
-      setProfileModalOpen(false);
-      showToast("Profile and photo updated!");
+      setProfileAvatarDataUri(null);
+      showToast("Profile & photo saved! Synced across mobile and desktop.");
     } catch (err) {
       const data = err.response?.data;
       if (data && typeof data === "object") {
@@ -731,18 +870,142 @@ export default function App() {
       } else {
         showToast("Failed to update profile.", "error");
       }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleRequestPasswordOtp = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!user?.email) {
+      showToast("No email address is linked to your account for OTP delivery.", "error");
+      return;
+    }
+    if (!skipCurrentPasswordForOtp && !passwordForm.current_password) {
+      showToast("Please enter your current password (or select Verify via Email OTP only).", "error");
+      return;
+    }
+    if (!passwordForm.new_password || passwordForm.new_password.length < 8) {
+      showToast("New password must be at least 8 characters long.", "error");
+      return;
+    }
+    if (passwordForm.new_password !== (passwordForm.confirm_password || "")) {
+      showToast("New password and confirm password do not match.", "error");
+      return;
+    }
+
+    setSendingProfileOtp(true);
+    try {
+      const res = await api.post("/accounts/change-password/", {
+        action: "send_otp",
+        current_password: passwordForm.current_password,
+        new_password: passwordForm.new_password,
+        skip_current_password: skipCurrentPasswordForOtp,
+      });
+      setProfileOtpSent(true);
+      showToast(res.data?.message || `6-digit OTP sent to ${user.email}!`);
+    } catch (err) {
+      const status = err.response?.status;
+      const errMsg = err.response?.data?.error || "";
+      // If current password is explicitly wrong, show the error immediately
+      if (errMsg.toLowerCase().includes("current password is incorrect")) {
+        showToast("Current password is incorrect.", "error");
+        setSendingProfileOtp(false);
+        return;
+      }
+      // Automatic fallback to /accounts/login/ (action: "send_otp") if backend hasn't been redeployed yet
+      if (status === 400 || status === 404 || status === 405) {
+        try {
+          const fallbackRes = await api.post("/accounts/login/", {
+            action: "send_otp",
+            email: user.email,
+          });
+          setProfileOtpSent(true);
+          showToast(fallbackRes.data?.message || `6-digit OTP sent to ${user.email}!`);
+          setSendingProfileOtp(false);
+          return;
+        } catch (fbErr) {
+          showToast(fbErr.response?.data?.error || "Could not send verification OTP.", "error");
+          setSendingProfileOtp(false);
+          return;
+        }
+      }
+      showToast(errMsg || "Could not send verification OTP.", "error");
+    } finally {
+      setSendingProfileOtp(false);
     }
   };
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
+    if (!profileOtpSent) {
+      await handleRequestPasswordOtp(e);
+      return;
+    }
+    const cleanOtp = (passwordForm.otp || "").trim();
+    if (cleanOtp.length !== 6) {
+      showToast("Please enter the 6-digit OTP code sent to your email.", "error");
+      return;
+    }
+    if (!passwordForm.new_password || passwordForm.new_password.length < 8) {
+      showToast("New password must be at least 8 characters long.", "error");
+      return;
+    }
+
+    setVerifyingProfileOtp(true);
     try {
-      const res = await api.post("/accounts/change-password/", passwordForm);
-      showToast(res.data.message || "Password updated successfully!");
-      setPasswordForm({ current_password: "", new_password: "" });
-      setProfileModalOpen(false);
+      const res = await api.post("/accounts/change-password/", {
+        action: "verify_otp_and_change",
+        current_password: passwordForm.current_password,
+        new_password: passwordForm.new_password,
+        otp: cleanOtp,
+        skip_current_password: skipCurrentPasswordForOtp,
+      });
+      showToast(res.data?.message || "Password updated securely via Email OTP!");
+      setPasswordForm({ current_password: "", new_password: "", confirm_password: "", otp: "" });
+      setProfileOtpSent(false);
     } catch (err) {
-      showToast(err.response?.data?.error || "Failed to change password.", "error");
+      const errMsg = err.response?.data?.error || "";
+      if (
+        errMsg.toLowerCase().includes("invalid") ||
+        errMsg.toLowerCase().includes("expired") ||
+        errMsg.toLowerCase().includes("no active otp")
+      ) {
+        // Also try verifying against /accounts/login/ (action: "verify_otp_and_reset") if OTP was issued there
+        try {
+          const fbVerify = await api.post("/accounts/login/", {
+            action: "verify_otp_and_reset",
+            email: user?.email,
+            otp: cleanOtp,
+            new_password: passwordForm.new_password,
+          });
+          showToast(fbVerify.data?.message || "Password updated securely via Email OTP!");
+          setPasswordForm({ current_password: "", new_password: "", confirm_password: "", otp: "" });
+          setProfileOtpSent(false);
+          setVerifyingProfileOtp(false);
+          return;
+        } catch (fbErr) {
+          showToast(fbErr.response?.data?.error || errMsg || "Invalid OTP code.", "error");
+          setVerifyingProfileOtp(false);
+          return;
+        }
+      }
+      // Fallback to /accounts/login/ verify_otp_and_reset
+      try {
+        const fbVerify = await api.post("/accounts/login/", {
+          action: "verify_otp_and_reset",
+          email: user?.email,
+          otp: cleanOtp,
+          new_password: passwordForm.new_password,
+        });
+        showToast(fbVerify.data?.message || "Password updated securely via Email OTP!");
+        setPasswordForm({ current_password: "", new_password: "", confirm_password: "", otp: "" });
+        setProfileOtpSent(false);
+      } catch (fbErr) {
+        showToast(fbErr.response?.data?.error || errMsg || "Failed to verify OTP and change password.", "error");
+      }
+    } finally {
+      setVerifyingProfileOtp(false);
     }
   };
 
@@ -760,6 +1023,8 @@ export default function App() {
       formData.append("pickup_location", sellForm.pickup_location.trim());
       if (sellForm.image instanceof File) {
         formData.append("image", sellForm.image);
+        const { dataUri: sUri } = await compressImageToDataUriAndFile(sellForm.image, 800, 0.82);
+        if (sUri) formData.append("image_data_uri", sUri);
       }
 
       await api.post("/marketplace/sell-submissions/", formData);
@@ -1096,19 +1361,23 @@ export default function App() {
 
                 {/* User Avatar Badge with Real Profile Picture */}
                 <button
-                  onClick={() => setProfileModalOpen(true)}
-                  className="flex items-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-full p-1 sm:pl-1.5 sm:pr-3 sm:py-1 text-left transition cursor-pointer"
-                  title="Click to Edit Profile & Password"
+                  onClick={() => {
+                    setQuickViewProduct(null);
+                    setActiveTab("profile");
+                  }}
+                  className={`flex items-center gap-2 border rounded-full p-1 sm:pl-1.5 sm:pr-3 sm:py-1 text-left transition cursor-pointer ${
+                    activeTab === "profile"
+                      ? "bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20"
+                      : "bg-slate-50 hover:bg-slate-100 border-slate-200/80"
+                  }`}
+                  title="Open My Profile & Security Page"
                 >
                   <div className="w-8 h-8 rounded-full bg-emerald-800 text-white flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden border border-emerald-700">
-                    {user.profile_picture ? (
+                    {resolveMediaUrl(user.profile_picture, user.id) && !avatarLoadError ? (
                       <img
-                        src={
-                          user.profile_picture.startsWith("http")
-                            ? user.profile_picture
-                            : `${BACKEND_URL}${user.profile_picture}`
-                        }
+                        src={resolveMediaUrl(user.profile_picture, user.id)}
                         alt={user.full_name}
+                        onError={() => setAvatarLoadError(true)}
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -1222,6 +1491,14 @@ export default function App() {
                       },
                     ]
                   : []),
+                ...(user
+                  ? [
+                      {
+                        id: "profile",
+                        label: tr("My Profile & Security", "मेरो प्रोफाइल"),
+                      },
+                    ]
+                  : []),
               ].map((item) => (
                 <button
                   key={item.id}
@@ -1272,6 +1549,554 @@ export default function App() {
 
       {/* MAIN CONTENT */}
       <main className="flex-1">
+        {/* DEDICATED FULL-PAGE USER PROFILE, PHOTO STUDIO & OTP PASSWORD SECURITY PAGE */}
+        {activeTab === "profile" && user && (() => {
+          const currentAvatarUrl = profileAvatarPreview || resolveMediaUrl(user.profile_picture, user.id);
+          const newPass = passwordForm.new_password || "";
+          const passScore =
+            (newPass.length >= 8 ? 1 : 0) +
+            (/[A-Z]/.test(newPass) ? 1 : 0) +
+            (/[0-9]/.test(newPass) ? 1 : 0) +
+            (/[^A-Za-z0-9]/.test(newPass) || newPass.length >= 12 ? 1 : 0);
+          const passStrengthLabel =
+            newPass.length === 0
+              ? "Min 8 characters"
+              : newPass.length < 8
+              ? "Too short (< 8 chars)"
+              : passScore <= 1
+              ? "Fair password"
+              : passScore === 2
+              ? "Good password"
+              : "Strong password";
+
+          return (
+            <div className="max-w-6xl mx-auto px-3 sm:px-8 py-6 sm:py-8 space-y-6">
+              {/* Top Navigation & Breadcrumb Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("home")}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm shadow-2xs transition cursor-pointer"
+                >
+                  <span>← Back to Marketplace</span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-xs font-extrabold">
+                    Member ID: #KM-USR-{user.id}
+                  </span>
+                  {isVerifiedOrAdmin ? (
+                    <span className="px-3 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-extrabold flex items-center gap-1 shadow-xs">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Verified {user.role}
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-extrabold">
+                      ⏳ Pending Verification
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Executive Hero Banner with Large Avatar Studio */}
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#0F2E1E] via-[#14532D] to-[#1B4332] text-white p-6 sm:p-8 shadow-xl border border-emerald-800/40">
+                <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-emerald-400/10 blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-24 -left-24 w-64 h-64 rounded-full bg-amber-400/10 blur-3xl pointer-events-none" />
+
+                <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-center gap-5 text-center sm:text-left">
+                    <div className="relative group shrink-0">
+                      <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full bg-emerald-900/90 border-4 border-amber-400/90 shadow-xl overflow-hidden flex items-center justify-center text-3xl font-black text-white">
+                        {currentAvatarUrl && !avatarLoadError ? (
+                          <img
+                            src={currentAvatarUrl}
+                            alt={user.full_name}
+                            onError={() => setAvatarLoadError(true)}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span>{(user.full_name || "U").charAt(0).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <label
+                        htmlFor="profile-page-avatar-input"
+                        className="absolute bottom-0 right-0 w-9 h-9 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center justify-center shadow-lg border-2 border-[#14532D] cursor-pointer transition transform hover:scale-105"
+                        title="Change Profile Picture"
+                      >
+                        <Camera className="w-4 h-4" />
+                      </label>
+                      <input
+                        id="profile-page-avatar-input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleSelectProfilePhoto}
+                        className="hidden"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
+                          {user.role || "CUSTOMER"} ACCOUNT
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-white/10 border border-white/15 text-emerald-100 text-[11px] font-semibold">
+                          🌱 KrishiMart Nepal Member
+                        </span>
+                      </div>
+                      <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                        {user.full_name}
+                      </h1>
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-1 text-xs text-emerald-100/90">
+                        <span>✉️ {user.email || "No email linked"}</span>
+                        <span>📞 {user.phone_number || "No phone added"}</span>
+                        <span>📍 {user.location || "Nepal"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Account Activity Summary */}
+                  <div className="grid grid-cols-3 gap-2.5 sm:gap-3 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-3.5 sm:p-4 text-center shrink-0">
+                    <div
+                      onClick={() => !isAdmin && setActiveTab("orders")}
+                      className="px-2 sm:px-3 py-1 rounded-xl hover:bg-white/10 transition cursor-pointer"
+                    >
+                      <p className="text-lg sm:text-xl font-black text-amber-300">
+                        {myOrders.length}
+                      </p>
+                      <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider">
+                        My Orders
+                      </p>
+                    </div>
+                    <div
+                      onClick={() => isFarmer && setActiveTab("sell")}
+                      className="px-2 sm:px-3 py-1 rounded-xl border-x border-white/10 hover:bg-white/10 transition cursor-pointer"
+                    >
+                      <p className="text-lg sm:text-xl font-black text-emerald-300">
+                        {mySubmissions.length}
+                      </p>
+                      <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider">
+                        Harvest Offers
+                      </p>
+                    </div>
+                    <div className="px-2 sm:px-3 py-1 rounded-xl">
+                      <p className="text-lg sm:text-xl font-black text-white">OTP</p>
+                      <p className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider">
+                        2FA Security
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2-Column Main Profile & OTP Security Grid */}
+              <div className="grid lg:grid-cols-12 gap-6 items-start">
+                {/* LEFT COLUMN (7 Cols): Personal Details & Profile Photo Card */}
+                <form
+                  onSubmit={handleUpdateProfile}
+                  className="lg:col-span-7 bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-sm space-y-6"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-100">
+                    <div>
+                      <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
+                        <User className="w-5 h-5 text-[#14532D]" />
+                        <span>Personal Details & Profile Photo</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Your photo is automatically optimized so it loads fast on all mobile phones and laptops
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Photo Upload Strip */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/70">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-2xl bg-[#14532D] text-white font-black text-xl flex items-center justify-center overflow-hidden border-2 border-emerald-600/30 shadow-sm shrink-0">
+                        {currentAvatarUrl && !avatarLoadError ? (
+                          <img
+                            src={currentAvatarUrl}
+                            alt={user.full_name}
+                            onError={() => setAvatarLoadError(true)}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span>{(user.full_name || "U").charAt(0).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-extrabold text-slate-900">
+                          {profileAvatarPreview
+                            ? "✨ New Photo Ready to Save"
+                            : "Profile Picture (Mobile & Desktop Synced)"}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Supports camera photos & gallery images (JPG, PNG, WebP)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="profile-page-avatar-input"
+                        className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-emerald-300 text-[#14532D] text-xs font-extrabold flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                      >
+                        <Camera className="w-4 h-4 text-emerald-700" />
+                        <span>{profileAvatarPreview ? "Change Photo" : "Upload Photo"}</span>
+                      </label>
+                      {profileAvatarPreview && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileAvatarFile(null);
+                            setProfileAvatarPreview(null);
+                            setProfileAvatarDataUri(null);
+                          }}
+                          className="px-3 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold transition cursor-pointer"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Form Fields */}
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                        Full Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Enter your full name"
+                        value={profileForm.full_name}
+                        onChange={(e) =>
+                          setProfileForm({ ...profileForm, full_name: e.target.value })
+                        }
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-[#14532D] bg-slate-50/50 focus:bg-white text-sm font-medium outline-none transition"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                        Registered Email (For OTP & Receipts)
+                      </label>
+                      <input
+                        type="email"
+                        disabled
+                        value={user.email || ""}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-100 text-slate-500 text-sm font-medium cursor-not-allowed"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                        Phone Number (10 digits)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="98XXXXXXXX"
+                        value={profileForm.phone_number}
+                        onChange={(e) =>
+                          setProfileForm({ ...profileForm, phone_number: e.target.value })
+                        }
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-[#14532D] bg-slate-50/50 focus:bg-white text-sm font-medium outline-none transition"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                        Default Delivery / Farm Location
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Dhangadhi-4, Kailali or Baneshwor, Kathmandu"
+                        value={profileForm.location}
+                        onChange={(e) =>
+                          setProfileForm({ ...profileForm, location: e.target.value })
+                        }
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-[#14532D] bg-slate-50/50 focus:bg-white text-sm font-medium outline-none transition"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-[11px] text-slate-500">
+                      ✓ Changes take effect immediately across your orders, reviews, and chat profile.
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={savingProfile}
+                      className="px-6 py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-md transition cursor-pointer"
+                    >
+                      {savingProfile ? "Saving Profile & Photo..." : "✓ Save Profile & Photo"}
+                    </button>
+                  </div>
+                </form>
+
+                {/* RIGHT COLUMN (5 Cols): Change Password with 6-Digit Email OTP Verification */}
+                <div className="lg:col-span-5 bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-sm space-y-5">
+                  <div className="pb-4 border-b border-slate-100">
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-amber-600" />
+                        <span>Change Password (OTP)</span>
+                      </h2>
+                      <span className="px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-black uppercase">
+                        6-Digit Email OTP
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Protected by 2-step email verification sent to{" "}
+                      <strong className="text-slate-700">{user.email}</strong>
+                    </p>
+                  </div>
+
+                  {/* 2-Step Visual Progress Pill */}
+                  <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-100 text-xs font-extrabold">
+                    <div
+                      className={`py-2 px-3 rounded-xl text-center transition ${
+                        !profileOtpSent
+                          ? "bg-[#14532D] text-white shadow-xs"
+                          : "bg-emerald-100 text-[#14532D]"
+                      }`}
+                    >
+                      1. Set New Password
+                    </div>
+                    <div
+                      className={`py-2 px-3 rounded-xl text-center transition ${
+                        profileOtpSent
+                          ? "bg-amber-500 text-slate-950 shadow-xs"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      2. Verify 6-Digit OTP
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleChangePassword} className="space-y-4">
+                    {/* Option to use Current Password or Email OTP only */}
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-slate-600">
+                        {skipCurrentPasswordForOtp
+                          ? "Mode: Verify via Email OTP Only"
+                          : "Mode: Current Password + Email OTP"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSkipCurrentPasswordForOtp((prev) => !prev);
+                          setProfileOtpSent(false);
+                        }}
+                        className="text-emerald-700 hover:underline font-extrabold cursor-pointer"
+                      >
+                        {skipCurrentPasswordForOtp
+                          ? "Use Current Password"
+                          : "Forgot Current Password?"}
+                      </button>
+                    </div>
+
+                    {!skipCurrentPasswordForOtp && (
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                          Current Password *
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showCurrentPassword ? "text" : "password"}
+                            required={!skipCurrentPasswordForOtp}
+                            disabled={profileOtpSent}
+                            placeholder="Enter your current password"
+                            value={passwordForm.current_password}
+                            onChange={(e) =>
+                              setPasswordForm({ ...passwordForm, current_password: e.target.value })
+                            }
+                            className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white text-sm outline-none focus:border-[#14532D] disabled:opacity-60"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCurrentPassword((prev) => !prev)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                          >
+                            {showCurrentPassword ? (
+                              <EyeOff className="w-4 h-4" />
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                        New Password (min 8 characters) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showNewPassword ? "text" : "password"}
+                          required
+                          minLength={8}
+                          disabled={profileOtpSent}
+                          placeholder="Create a strong new password"
+                          value={passwordForm.new_password}
+                          onChange={(e) =>
+                            setPasswordForm({ ...passwordForm, new_password: e.target.value })
+                          }
+                          className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white text-sm outline-none focus:border-[#14532D] disabled:opacity-60"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword((prev) => !prev)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                        >
+                          {showNewPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Password Strength Meter */}
+                      <div className="mt-2 space-y-1">
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {[1, 2, 3, 4].map((lvl) => (
+                            <div
+                              key={lvl}
+                              className={`h-1.5 rounded-full transition-all ${
+                                newPass.length === 0
+                                  ? "bg-slate-200"
+                                  : passScore >= lvl
+                                  ? passScore <= 1
+                                    ? "bg-red-500"
+                                    : passScore === 2
+                                    ? "bg-amber-500"
+                                    : "bg-emerald-600"
+                                  : "bg-slate-200"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-500 text-right">
+                          {passStrengthLabel}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                        Confirm New Password *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showConfirmNewPassword ? "text" : "password"}
+                          required
+                          minLength={8}
+                          disabled={profileOtpSent}
+                          placeholder="Re-enter new password"
+                          value={passwordForm.confirm_password || ""}
+                          onChange={(e) =>
+                            setPasswordForm({ ...passwordForm, confirm_password: e.target.value })
+                          }
+                          className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white text-sm outline-none focus:border-[#14532D] disabled:opacity-60"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmNewPassword((prev) => !prev)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                        >
+                          {showConfirmNewPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                      {passwordForm.confirm_password && (
+                        <p
+                          className={`text-[11px] font-bold mt-1 ${
+                            passwordForm.new_password === passwordForm.confirm_password
+                              ? "text-emerald-700"
+                              : "text-red-600"
+                          }`}
+                        >
+                          {passwordForm.new_password === passwordForm.confirm_password
+                            ? "✓ Passwords match"
+                            : "✕ Passwords do not match"}
+                        </p>
+                      )}
+                    </div>
+
+                    {!profileOtpSent ? (
+                      <button
+                        type="button"
+                        onClick={handleRequestPasswordOtp}
+                        disabled={sendingProfileOtp}
+                        className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
+                      >
+                        {sendingProfileOtp
+                          ? "Sending 6-Digit OTP to Email..."
+                          : `📩 Send 6-Digit OTP to ${user.email}`}
+                      </button>
+                    ) : (
+                      <div className="p-4 rounded-2xl bg-emerald-50/90 border-2 border-emerald-500/40 space-y-3 animate-fadeIn">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[#14532D]">
+                            ✓ 6-Digit OTP Sent to Inbox
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setProfileOtpSent(false)}
+                            className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                          >
+                            ← Edit Password
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Enter the 6-digit verification code sent to{" "}
+                          <strong>{user.email}</strong> to confirm your password update:
+                        </p>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          required
+                          placeholder="000000"
+                          value={passwordForm.otp || ""}
+                          onChange={(e) =>
+                            setPasswordForm({
+                              ...passwordForm,
+                              otp: e.target.value.replace(/[^0-9]/g, "").slice(0, 6),
+                            })
+                          }
+                          className="w-full py-3 px-4 rounded-xl border-2 border-emerald-600 bg-white text-center text-xl font-black tracking-[0.4em] text-[#14532D] outline-none"
+                        />
+                        <button
+                          type="submit"
+                          disabled={verifyingProfileOtp}
+                          className="w-full py-3 rounded-xl bg-[#14532D] hover:bg-[#1B4332] disabled:opacity-60 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
+                        >
+                          {verifyingProfileOtp
+                            ? "Verifying OTP & Updating..."
+                            : "🔒 Verify OTP & Update Password"}
+                        </button>
+                        <div className="text-center">
+                          <button
+                            type="button"
+                            onClick={handleRequestPasswordOtp}
+                            disabled={sendingProfileOtp}
+                            className="text-[11px] font-extrabold text-emerald-800 hover:underline cursor-pointer"
+                          >
+                            {sendingProfileOtp ? "Resending code..." : "↻ Resend 6-Digit OTP Code"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </form>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ADMIN PANEL VIEW */}
         {activeTab === "admin" && (
           <div className="max-w-7xl mx-auto px-3 sm:px-8 py-6 sm:py-8">
@@ -2663,6 +3488,10 @@ export default function App() {
                     <img
                       src={imgUrl}
                       alt={p.name}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = getFallbackProductImage(p);
+                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                     />
                     <span className="absolute top-3 left-3 px-3 py-1 rounded-full bg-white/95 text-slate-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
@@ -3203,9 +4032,7 @@ export default function App() {
                                     {br.author_avatar ? (
                                       <img
                                         src={
-                                          br.author_avatar.startsWith("http")
-                                            ? br.author_avatar
-                                            : `${BACKEND_URL}${br.author_avatar}`
+                                          resolveMediaUrl(br.author_avatar, br.author)
                                         }
                                         alt={br.author_name}
                                         className="w-full h-full object-cover"
@@ -3256,9 +4083,7 @@ export default function App() {
                                 <div className="pt-1">
                                   <img
                                     src={
-                                      br.image.startsWith("http")
-                                        ? br.image
-                                        : `${BACKEND_URL}${br.image}`
+                                      resolveMediaUrl(br.image)
                                     }
                                     alt={br.title || "Customer review photo"}
                                     className="w-28 h-28 sm:w-36 sm:h-36 object-cover rounded-2xl border border-slate-200 shadow-2xs"
@@ -3343,6 +4168,10 @@ export default function App() {
                               src={getProductImage(rp)}
                               alt={rp.name}
                               loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src = getFallbackProductImage(rp);
+                              }}
                               className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                             />
                           </div>
@@ -3813,6 +4642,10 @@ export default function App() {
                                 src={imgUrl}
                                 alt={p.name}
                                 loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = getFallbackProductImage(p);
+                                }}
                                 className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                               />
                               <span className="absolute top-2 left-2 sm:top-3 sm:left-3 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-white/95 text-slate-800 text-[9px] sm:text-[11px] font-bold flex items-center gap-1 shadow-xs max-w-[75%] truncate">
@@ -4085,9 +4918,7 @@ export default function App() {
                         {st.author_avatar ? (
                           <img
                             src={
-                              st.author_avatar.startsWith("http")
-                                ? st.author_avatar
-                                : `${BACKEND_URL}${st.author_avatar}`
+                              resolveMediaUrl(st.author_avatar, st.author)
                             }
                             alt={st.author_name}
                             className="w-full h-full object-cover"
@@ -4117,9 +4948,7 @@ export default function App() {
                     {st.image && (
                       <img
                         src={
-                          st.image.startsWith("http")
-                            ? st.image
-                            : `${BACKEND_URL}${st.image}`
+                          resolveMediaUrl(st.image)
                         }
                         alt={st.title || "Story photo"}
                         className="w-full h-44 object-cover rounded-2xl border border-slate-200"
@@ -4196,9 +5025,7 @@ export default function App() {
                             {br.author_avatar ? (
                               <img
                                 src={
-                                  br.author_avatar.startsWith("http")
-                                    ? br.author_avatar
-                                    : `${BACKEND_URL}${br.author_avatar}`
+                                  resolveMediaUrl(br.author_avatar, br.author)
                                 }
                                 alt={br.author_name}
                                 className="w-full h-full object-cover"
@@ -4225,9 +5052,7 @@ export default function App() {
                       {br.image && (
                         <img
                           src={
-                            br.image.startsWith("http")
-                              ? br.image
-                              : `${BACKEND_URL}${br.image}`
+                            resolveMediaUrl(br.image)
                           }
                           alt={br.title || "Review photo"}
                           className="w-full h-36 object-cover rounded-2xl border border-slate-200 mt-2"
@@ -4503,174 +5328,6 @@ export default function App() {
                 </button>
               </form>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* EDIT USER PROFILE, PHOTO & CHANGE PASSWORD MODAL */}
-      {profileModalOpen && user && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <form onSubmit={handleUpdateProfile} className="space-y-3.5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-extrabold text-slate-900">Your Profile & Photo</h3>
-                <button
-                  type="button"
-                  onClick={() => setProfileModalOpen(false)}
-                  className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-4 py-2 border-b border-slate-100">
-                <div className="relative w-16 h-16 rounded-full bg-slate-100 border-2 border-emerald-600/30 overflow-hidden flex items-center justify-center shrink-0">
-                  {profileAvatarPreview ? (
-                    <img
-                      src={profileAvatarPreview}
-                      alt="Preview"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : user.profile_picture ? (
-                    <img
-                      src={
-                        user.profile_picture.startsWith("http")
-                          ? user.profile_picture
-                          : `${BACKEND_URL}${user.profile_picture}`
-                      }
-                      alt={user.full_name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <User className="w-8 h-8 text-slate-400" />
-                  )}
-                </div>
-                <div>
-                  <label
-                    htmlFor="edit-profile-avatar"
-                    className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-emerald-700" /> Change Profile Photo
-                  </label>
-                  <input
-                    id="edit-profile-avatar"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setProfileAvatarFile(file);
-                        setProfileAvatarPreview(URL.createObjectURL(file));
-                      }
-                    }}
-                    className="hidden"
-                  />
-                  <span className="text-[10px] text-slate-400 block mt-0.5">JPG or PNG</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileForm.full_name}
-                  onChange={(e) => setProfileForm({ ...profileForm, full_name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
-                <input
-                  type="text"
-                  value={profileForm.phone_number}
-                  onChange={(e) =>
-                    setProfileForm({ ...profileForm, phone_number: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Default Location / Address
-                </label>
-                <input
-                  type="text"
-                  value={profileForm.location}
-                  onChange={(e) => setProfileForm({ ...profileForm, location: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer"
-              >
-                Save Profile & Photo
-              </button>
-            </form>
-
-            {/* Restored Change Password Section (With Show / Hide Password Toggles) */}
-            <form
-              onSubmit={handleChangePassword}
-              className="pt-4 border-t border-slate-200 space-y-3"
-            >
-              <h4 className="text-sm font-extrabold text-slate-900">Change Password</h4>
-              <div className="relative">
-                <input
-                  type={showCurrentPassword ? "text" : "password"}
-                  required
-                  placeholder="Current Password *"
-                  value={passwordForm.current_password}
-                  onChange={(e) =>
-                    setPasswordForm({ ...passwordForm, current_password: e.target.value })
-                  }
-                  className="w-full pl-3.5 pr-10 py-2 rounded-xl border border-slate-200 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowCurrentPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
-                  title={showCurrentPassword ? "Hide password" : "Show password"}
-                >
-                  {showCurrentPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-              <div className="relative">
-                <input
-                  type={showNewPassword ? "text" : "password"}
-                  required
-                  minLength={8}
-                  placeholder="New Password (min 8 chars) *"
-                  value={passwordForm.new_password}
-                  onChange={(e) =>
-                    setPasswordForm({ ...passwordForm, new_password: e.target.value })
-                  }
-                  className="w-full pl-3.5 pr-10 py-2 rounded-xl border border-slate-200 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
-                  title={showNewPassword ? "Hide password" : "Show password"}
-                >
-                  {showNewPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer"
-              >
-                Update Password
-              </button>
-            </form>
           </div>
         </div>
       )}
@@ -5400,10 +6057,30 @@ export default function App() {
           </button>
         ) : user ? (
           <button
-            onClick={() => setProfileModalOpen(true)}
-            className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-400 cursor-pointer"
+            onClick={() => {
+              setQuickViewProduct(null);
+              setActiveTab("profile");
+            }}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
+              activeTab === "profile" ? "text-[#14532D]" : "text-slate-400"
+            }`}
           >
-            <User className="w-5 h-5" />
+            <div
+              className={`w-5 h-5 rounded-full overflow-hidden flex items-center justify-center bg-emerald-800 text-white text-[10px] font-black border ${
+                activeTab === "profile" ? "border-[#14532D] ring-2 ring-emerald-500/30" : "border-slate-300"
+              }`}
+            >
+              {resolveMediaUrl(user.profile_picture, user.id) && !avatarLoadError ? (
+                <img
+                  src={resolveMediaUrl(user.profile_picture, user.id)}
+                  alt={user.full_name}
+                  onError={() => setAvatarLoadError(true)}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span>{(user.full_name || "U").charAt(0).toUpperCase()}</span>
+              )}
+            </div>
             <span>Profile</span>
           </button>
         ) : (
