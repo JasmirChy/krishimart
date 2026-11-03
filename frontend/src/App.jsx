@@ -640,6 +640,105 @@ function InteractiveDeliveryMap({
   );
 }
 
+// Read-only Interactive Route Map for Customer's "My Harvest Orders" Inline Map Modal
+function CustomerOrderRouteMap({ lat, lng, addressLabel, distanceKm, isFreeDelivery, deliveryCharge }) {
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    const destLat = Number(lat || 28.7036);
+    const destLng = Number(lng || 80.5924);
+
+    ensureLeafletLoaded().then((L) => {
+      if (!active || !L || !mapContainerRef.current) return;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+
+      const map = L.map(mapContainerRef.current, {
+        center: [(KRISHIMART_HUB.lat + destLat) / 2, (KRISHIMART_HUB.lng + destLng) / 2],
+        zoom: 14,
+        scrollWheelZoom: true,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+
+      const hubIcon = L.divIcon({
+        className: "km-hub-route-pin",
+        html: `<div style="background:#14532D;color:#fff;border:3px solid #fbbf24;border-radius:999px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">🌱</div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+
+      const custIcon = L.divIcon({
+        className: "km-cust-route-pin",
+        html: `<div style="background:#dc2626;color:#fff;border:3px solid #ffffff;border-radius:999px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:17px;box-shadow:0 6px 14px rgba(220,38,38,0.45);">📍</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      L.marker([KRISHIMART_HUB.lat, KRISHIMART_HUB.lng], { icon: hubIcon })
+        .addTo(map)
+        .bindPopup(`<strong>🌱 KrishiMart Hub</strong><br/><span style="font-size:11px;">${KRISHIMART_HUB.dms}</span>`);
+
+      L.marker([destLat, destLng], { icon: custIcon })
+        .addTo(map)
+        .bindPopup(
+          `<strong>📍 Delivery Location</strong><br/><span style="font-size:11px;">${addressLabel || "Dhangadhi"}<br/>${
+            distanceKm ? `${distanceKm} km from Hub` : ""
+          } (${isFreeDelivery ? "FREE Delivery" : `रु ${Number(deliveryCharge || 0).toFixed(2)}`})</span>`
+        )
+        .openPopup();
+
+      const poly = L.polyline(
+        [
+          [KRISHIMART_HUB.lat, KRISHIMART_HUB.lng],
+          [destLat, destLng],
+        ],
+        { color: "#14532D", weight: 4, dashArray: "8 6", opacity: 0.9 }
+      ).addTo(map);
+
+      map.fitBounds(poly.getBounds(), { padding: [45, 45] });
+
+      fetch(
+        `https://router.project-osrm.org/route/v1/driving/${KRISHIMART_HUB.lng},${KRISHIMART_HUB.lat};${destLng},${destLat}?overview=full&geometries=geojson`
+      )
+        .then((r) => r.json())
+        .then((data) => {
+          const coords = data?.routes?.[0]?.geometry?.coordinates;
+          if (active && coords && coords.length > 0) {
+            poly.setLatLngs(coords.map(([ln, lt]) => [lt, ln]));
+            poly.setStyle({ dashArray: null, color: "#16a34a", weight: 5 });
+            map.fitBounds(poly.getBounds(), { padding: [45, 45] });
+          }
+        })
+        .catch(() => {});
+
+      mapInstanceRef.current = map;
+      setTimeout(() => map.invalidateSize(), 180);
+    });
+
+    return () => {
+      active = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [lat, lng]);
+
+  return (
+    <div className="rounded-2xl overflow-hidden border-2 border-emerald-600/30 shadow-inner bg-slate-100">
+      <div ref={mapContainerRef} className="w-full h-64 sm:h-80 z-10" />
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -664,7 +763,29 @@ export default function App() {
   const [inStockOnly, setInStockOnly] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState("ALL");
   const [farmerSalesFilter, setFarmerSalesFilter] = useState("ALL"); // "ALL" | "PAID" | "PENDING"
-  const [submissionFilter, setSubmissionFilter] = useState("ALL"); // "ALL" | "PENDING" | "BOUGHT" | "REJECTED" 
+  const [submissionFilter, setSubmissionFilter] = useState("ALL"); // "ALL" | "PENDING" | "BOUGHT" | "REJECTED"
+
+  // Hybrid Smart Pagination + "Show More" Dock + Search/Sort/Density States (Orders, Farmer Sales, Submissions)
+  const [ordersSearchQuery, setOrdersSearchQuery] = useState("");
+  const [ordersSortBy, setOrdersSortBy] = useState("NEWEST"); // "NEWEST" | "OLDEST" | "HIGH_AMOUNT" | "LOW_AMOUNT" | "ACTIVE_FIRST"
+  const [ordersViewMode, setOrdersViewMode] = useState("detailed"); // "detailed" | "compact"
+  const [ordersPageSize, setOrdersPageSize] = useState(4); // 4 | 8 | 9999
+  const [ordersCurrentPage, setOrdersCurrentPage] = useState(1);
+  const [ordersExtraShown, setOrdersExtraShown] = useState(0); // Progressive "+ Show Next 4" expansion on current page
+  const [customerRouteModalOrder, setCustomerRouteModalOrder] = useState(null);
+
+  const [salesSearchQuery, setSalesSearchQuery] = useState("");
+  const [salesSortBy, setSalesSortBy] = useState("NEWEST"); // "NEWEST" | "OLDEST" | "HIGH_PAYOUT" | "PENDING_FIRST"
+  const [salesViewMode, setSalesViewMode] = useState("grid"); // "grid" | "compact"
+  const [salesPageSize, setSalesPageSize] = useState(4); // 4 | 8 | 9999
+  const [salesCurrentPage, setSalesCurrentPage] = useState(1);
+  const [salesExtraShown, setSalesExtraShown] = useState(0);
+
+  const [subSearchQuery, setSubSearchQuery] = useState("");
+  const [subSortBy, setSubSortBy] = useState("NEWEST"); // "NEWEST" | "OLDEST" | "HIGH_VALUE"
+  const [subPageSize, setSubPageSize] = useState(3); // 3 | 6 | 9999
+  const [subCurrentPage, setSubCurrentPage] = useState(1);
+  const [subExtraShown, setSubExtraShown] = useState(0); 
 
   // Language Toggle ("EN" | "NP")
   const [lang, setLang] = useState("EN");
@@ -2937,14 +3058,115 @@ export default function App() {
             PENDING: farmerSales.filter((s) => s.payment_status !== "PAID").length,
           };
 
-          const displayedSales =
-            farmerSalesFilter === "ALL"
-              ? farmerSales
-              : farmerSales.filter((s) =>
-                  farmerSalesFilter === "PAID"
-                    ? s.payment_status === "PAID"
-                    : s.payment_status !== "PAID"
-                );
+          const cleanSalesSearch = (salesSearchQuery || "").trim().toLowerCase();
+          const filteredSales = farmerSales
+            .filter((s) => {
+              if (farmerSalesFilter === "PAID" && s.payment_status !== "PAID") return false;
+              if (farmerSalesFilter === "PENDING" && s.payment_status === "PAID") return false;
+              if (!cleanSalesSearch) return true;
+              const voucherRef = `#km-pur-${s.id}`;
+              return (
+                voucherRef.includes(cleanSalesSearch) ||
+                String(s.id).includes(cleanSalesSearch) ||
+                (s.crop_name || "").toLowerCase().includes(cleanSalesSearch) ||
+                (s.category || "").toLowerCase().includes(cleanSalesSearch) ||
+                (s.pickup_location || "").toLowerCase().includes(cleanSalesSearch) ||
+                (s.payment_method || "").toLowerCase().includes(cleanSalesSearch)
+              );
+            })
+            .sort((a, b) => {
+              if (salesSortBy === "OLDEST") return Number(a.id) - Number(b.id);
+              if (salesSortBy === "HIGH_PAYOUT")
+                return Number(b.total_amount || 0) - Number(a.total_amount || 0);
+              if (salesSortBy === "PENDING_FIRST") {
+                const aPend = a.payment_status !== "PAID" ? 1 : 0;
+                const bPend = b.payment_status !== "PAID" ? 1 : 0;
+                if (bPend !== aPend) return bPend - aPend;
+              }
+              return Number(b.id) - Number(a.id);
+            });
+
+          // Hybrid Smart Pagination + "Show More" Dock Calculations
+          const totalFilteredSales = filteredSales.length;
+          const totalSalesPages = Math.max(1, Math.ceil(totalFilteredSales / salesPageSize));
+          const safeSalesPage = Math.min(salesCurrentPage, totalSalesPages);
+          const salesStartIdx = (safeSalesPage - 1) * salesPageSize;
+          const salesEndIdx = Math.min(
+            totalFilteredSales,
+            salesStartIdx + salesPageSize + salesExtraShown
+          );
+          const paginatedSales = filteredSales.slice(salesStartIdx, salesEndIdx);
+          const remainingSalesBelow = Math.max(0, totalFilteredSales - salesEndIdx);
+          const salesShownCount = paginatedSales.length;
+          const salesProgressPct =
+            totalFilteredSales > 0 ? Math.min(100, Math.round((salesEndIdx / totalFilteredSales) * 100)) : 100;
+
+          // Crop-wise earnings breakdown for aligned bottom analytics card
+          const cropBreakdownMap = {};
+          for (const s of farmerSales) {
+            const cName = s.crop_name || "Farm Crop";
+            if (!cropBreakdownMap[cName]) {
+              cropBreakdownMap[cName] = {
+                name: cName,
+                category: s.category || "VEGETABLES",
+                unit: s.unit || "kg",
+                totalQty: 0,
+                totalValue: 0,
+                paidValue: 0,
+                pendingValue: 0,
+                batches: 0,
+              };
+            }
+            const qtyNum = Number(s.quantity || 0);
+            const valNum = Number(s.total_amount || 0);
+            cropBreakdownMap[cName].totalQty += qtyNum;
+            cropBreakdownMap[cName].totalValue += valNum;
+            if (s.payment_status === "PAID") cropBreakdownMap[cName].paidValue += valNum;
+            else cropBreakdownMap[cName].pendingValue += valNum;
+            cropBreakdownMap[cName].batches += 1;
+          }
+          const cropBreakdownList = Object.values(cropBreakdownMap).sort(
+            (a, b) => b.totalValue - a.totalValue
+          );
+
+          const handleExportFarmerSalesCsv = () => {
+            if (farmerSales.length === 0) return;
+            const headers = [
+              "Voucher ID",
+              "Date",
+              "Crop Name",
+              "Category",
+              "Quantity",
+              "Unit",
+              "Wholesale Rate (NPR)",
+              "Total Payout (NPR)",
+              "Payment Status",
+              "Payment Method",
+              "Pickup Location",
+            ];
+            const rows = farmerSales.map((s) => [
+              `#KM-PUR-${s.id}`,
+              new Date(s.created_at).toLocaleDateString(),
+              `"${(s.crop_name || "").replace(/"/g, '""')}"`,
+              `"${(s.category || "").replace(/"/g, '""')}"`,
+              s.quantity,
+              s.unit,
+              s.agreed_wholesale_rate,
+              s.total_amount,
+              s.payment_status,
+              s.payment_method,
+              `"${(s.pickup_location || "").replace(/"/g, '""')}"`,
+            ]);
+            const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `KrishiMart_Farmer_Sales_Ledger_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+            showToast("Farmer Sales Ledger exported as CSV!");
+          };
 
           return (
           <div className="max-w-6xl mx-auto px-3 sm:px-8 py-5 sm:py-8 space-y-5">
@@ -2961,13 +3183,24 @@ export default function App() {
                   Direct procurement records, settlement statuses, and official 1/4 A4 vouchers.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab("sell")}
-                className="px-4 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
-              >
-                + Offer New Harvest Batch
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {farmerSales.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleExportFarmerSalesCsv}
+                    className="px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 hover:border-[#14532D] text-slate-700 hover:text-[#14532D] text-xs font-extrabold cursor-pointer shadow-2xs transition"
+                  >
+                    📥 Export CSV Ledger
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("sell")}
+                  className="px-4 py-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
+                >
+                  + Offer New Harvest Batch
+                </button>
+              </div>
             </div>
 
             {/* 4-Card Settlement & Payout Portfolio Breakdown */}
@@ -3046,36 +3279,125 @@ export default function App() {
               </div>
             )}
 
-            {/* 1-Tap Filter Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-              {[
-                { id: "ALL", label: "All Vouchers", count: salesCounts.ALL },
-                { id: "PAID", label: "✓ Settled (PAID)", count: salesCounts.PAID },
-                { id: "PENDING", label: "⏳ Pending Payout", count: salesCounts.PENDING },
-              ].map((tab) => {
-                const active = farmerSalesFilter === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setFarmerSalesFilter(tab.id)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
-                      active
-                        ? "bg-[#14532D] text-white shadow-xs"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                    }`}
+            {/* Unified Filter Tabs + Search, Sort, View Mode & Page-Size Toolbar */}
+            <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-2xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                  {[
+                    { id: "ALL", label: "All Vouchers", count: salesCounts.ALL },
+                    { id: "PAID", label: "✓ Settled (PAID)", count: salesCounts.PAID },
+                    { id: "PENDING", label: "⏳ Pending Payout", count: salesCounts.PENDING },
+                  ].map((tab) => {
+                    const active = farmerSalesFilter === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          setFarmerSalesFilter(tab.id);
+                          setSalesCurrentPage(1);
+                          setSalesExtraShown(0);
+                        }}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                          active
+                            ? "bg-[#14532D] text-white shadow-xs"
+                            : "bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            active ? "bg-amber-400 text-slate-950" : "bg-white text-slate-600"
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* View Mode & Page Size Selector */}
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200/70">
+                    {[
+                      { id: "grid", label: "📇 Cards" },
+                      { id: "compact", label: "📋 Compact" },
+                    ].map((vm) => (
+                      <button
+                        key={vm.id}
+                        type="button"
+                        onClick={() => setSalesViewMode(vm.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer ${
+                          salesViewMode === vm.id
+                            ? "bg-white text-[#14532D] shadow-2xs"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        {vm.label}
+                      </button>
+                    ))}
+                  </div>
+                  <select
+                    value={salesPageSize}
+                    onChange={(e) => {
+                      setSalesPageSize(Number(e.target.value));
+                      setSalesCurrentPage(1);
+                      setSalesExtraShown(0);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-extrabold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
                   >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        active ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-600"
-                      }`}
+                    <option value={4}>Show 4 / page</option>
+                    <option value={8}>Show 8 / page</option>
+                    <option value={9999}>Show All ({totalFilteredSales})</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Search & Sort Row */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 border-t border-slate-100">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={salesSearchQuery}
+                    onChange={(e) => {
+                      setSalesSearchQuery(e.target.value);
+                      setSalesCurrentPage(1);
+                      setSalesExtraShown(0);
+                    }}
+                    placeholder="Search voucher #KM-PUR-12, crop name, category, or payment method..."
+                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium outline-none focus:bg-white focus:border-[#14532D]"
+                  />
+                  {salesSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSalesSearchQuery("");
+                        setSalesCurrentPage(1);
+                        setSalesExtraShown(0);
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                     >
-                      {tab.count}
-                    </span>
-                  </button>
-                );
-              })}
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  value={salesSortBy}
+                  onChange={(e) => {
+                    setSalesSortBy(e.target.value);
+                    setSalesCurrentPage(1);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                >
+                  <option value="NEWEST">🕒 Sort: Newest First</option>
+                  <option value="OLDEST">📅 Sort: Oldest First</option>
+                  <option value="HIGH_PAYOUT">💰 Sort: Highest Payout First</option>
+                  <option value="PENDING_FIRST">⏳ Sort: Pending Payout First</option>
+                </select>
+              </div>
             </div>
 
             {loadingUserData && farmerSales.length === 0 ? (
@@ -3100,85 +3422,315 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            ) : displayedSales.length === 0 ? (
+            ) : filteredSales.length === 0 ? (
               <div className="bg-white rounded-3xl p-10 text-center text-slate-500 border border-slate-200 space-y-2">
                 <Receipt className="w-10 h-10 text-slate-300 mx-auto" />
                 <p className="text-sm font-bold text-slate-700">
-                  {farmerSalesFilter === "ALL"
+                  {farmerSalesFilter === "ALL" && !salesSearchQuery
                     ? "No crops have been purchased by the Admin yet."
-                    : `No ${farmerSalesFilter.toLowerCase()} vouchers found.`}
+                    : "No matching harvest sales vouchers found."}
                 </p>
                 <p className="text-xs text-slate-400">
                   Submit your harvest under "Sell Your Harvest" to start receiving wholesale payouts!
                 </p>
               </div>
             ) : (
-              <div className="grid sm:grid-cols-2 gap-4">
-                {displayedSales.map((s) => (
-                  <div
-                    key={s.id}
-                    className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:shadow-md transition space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
-                          {s.category}
-                        </span>
-                        <h3 className="font-extrabold text-base text-slate-900">{s.crop_name}</h3>
-                        <p className="text-[11px] text-slate-400">
-                          Sold on {new Date(s.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
-                          s.payment_status === "PAID"
-                            ? "bg-emerald-100 text-[#14532D]"
-                            : "bg-amber-100 text-amber-900"
-                        }`}
+              <div className="space-y-4">
+                {salesViewMode === "compact" ? (
+                  <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden divide-y divide-slate-100">
+                    {paginatedSales.map((s) => (
+                      <div
+                        key={s.id}
+                        className="p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50/80 transition"
                       >
-                        {s.payment_status === "PAID" ? "✓ PAID" : "⏳ PENDING"} ({s.payment_method})
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-black text-slate-700 shrink-0">
+                            #KM-PUR-{s.id}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-extrabold text-sm text-slate-900 truncate">
+                                {s.crop_name}
+                              </h4>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                  s.payment_status === "PAID"
+                                    ? "bg-emerald-100 text-[#14532D]"
+                                    : "bg-amber-100 text-amber-900"
+                                }`}
+                              >
+                                {s.payment_status} ({s.payment_method})
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500">
+                              {s.quantity} {s.unit} @ रु {s.agreed_wholesale_rate}/{s.unit} •{" "}
+                              {new Date(s.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 ml-auto">
+                          <span className="text-sm sm:text-base font-black text-[#14532D]">
+                            रु {Number(s.total_amount).toLocaleString()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveSlip({ ...s, slipType: "FARMER_SALE" })}
+                            className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Receipt className="w-3.5 h-3.5" /> Slip
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {paginatedSales.map((s) => (
+                      <div
+                        key={s.id}
+                        className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:shadow-md transition space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                              {s.category}
+                            </span>
+                            <h3 className="font-extrabold text-base text-slate-900">{s.crop_name}</h3>
+                            <p className="text-[11px] text-slate-400">
+                              Sold on {new Date(s.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
+                              s.payment_status === "PAID"
+                                ? "bg-emerald-100 text-[#14532D]"
+                                : "bg-amber-100 text-amber-900"
+                            }`}
+                          >
+                            {s.payment_status === "PAID" ? "✓ PAID" : "⏳ PENDING"} ({s.payment_method})
+                          </span>
+                        </div>
+
+                        <div className="p-3 bg-slate-50/90 rounded-2xl text-xs space-y-1.5 border border-slate-100">
+                          <div className="flex justify-between text-slate-600">
+                            <span>Quantity Procured:</span>
+                            <strong className="text-slate-900">
+                              {s.quantity} {s.unit}
+                            </strong>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Agreed Rate:</span>
+                            <strong className="text-slate-900">
+                              रु {s.agreed_wholesale_rate} / {s.unit}
+                            </strong>
+                          </div>
+                          <div className="flex justify-between border-t border-slate-200/80 pt-1.5 text-sm font-black text-[#14532D]">
+                            <span>Total Farmer Payout:</span>
+                            <span>रु {Number(s.total_amount).toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {s.admin_notes && (
+                          <p className="text-xs bg-emerald-50/70 p-2.5 rounded-xl text-emerald-950 border border-emerald-100 leading-snug">
+                            <strong>Admin Note:</strong> {s.admin_notes}
+                          </p>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-slate-400">
+                            Voucher #KM-PUR-{s.id}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveSlip({ ...s, slipType: "FARMER_SALE" })}
+                            className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <Receipt className="w-3.5 h-3.5" /> 🖨️ 1/4 A4 Slip
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* HYBRID SMART PAGINATION + "SHOW MORE" DOCK (FARMER SALES) */}
+                {totalFilteredSales > 0 && (
+                  <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs space-y-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="font-bold text-slate-600">
+                        Showing{" "}
+                        <strong className="text-slate-900">
+                          {salesStartIdx + 1}–{salesEndIdx}
+                        </strong>{" "}
+                        of <strong className="text-[#14532D]">{totalFilteredSales}</strong> harvest
+                        vouchers
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#14532D] text-[11px] font-extrabold">
+                        Page {safeSalesPage} of {totalSalesPages} • {salesProgressPct}% Viewed
                       </span>
                     </div>
 
-                    <div className="p-3 bg-slate-50/90 rounded-2xl text-xs space-y-1.5 border border-slate-100">
-                      <div className="flex justify-between text-slate-600">
-                        <span>Quantity Procured:</span>
-                        <strong className="text-slate-900">
-                          {s.quantity} {s.unit}
-                        </strong>
-                      </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>Agreed Rate:</span>
-                        <strong className="text-slate-900">
-                          रु {s.agreed_wholesale_rate} / {s.unit}
-                        </strong>
-                      </div>
-                      <div className="flex justify-between border-t border-slate-200/80 pt-1.5 text-sm font-black text-[#14532D]">
-                        <span>Total Farmer Payout:</span>
-                        <span>रु {Number(s.total_amount).toLocaleString()}</span>
-                      </div>
+                    {/* Progress Bar */}
+                    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#14532D] to-emerald-500 rounded-full transition-all duration-300"
+                        style={{ width: `${salesProgressPct}%` }}
+                      />
                     </div>
 
-                    {s.admin_notes && (
-                      <p className="text-xs bg-emerald-50/70 p-2.5 rounded-xl text-emerald-950 border border-emerald-100 leading-snug">
-                        <strong>Admin Note:</strong> {s.admin_notes}
-                      </p>
-                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      {/* Left: Progressive "+ Show Next 4" & "Show Less" Buttons */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {remainingSalesBelow > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSalesExtraShown((prev) => prev + salesPageSize)}
+                            className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-extrabold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-amber-300" />
+                            <span>
+                              Show Next {Math.min(salesPageSize, remainingSalesBelow)} Vouchers (
+                              {remainingSalesBelow} left)
+                            </span>
+                          </button>
+                        )}
+                        {salesExtraShown > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSalesExtraShown(0)}
+                            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold transition cursor-pointer"
+                          >
+                            ↑ Show Less (Reset to {salesPageSize})
+                          </button>
+                        )}
+                        {remainingSalesBelow > salesPageSize && (
+                          <button
+                            type="button"
+                            onClick={() => setSalesExtraShown(totalFilteredSales)}
+                            className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-bold transition cursor-pointer"
+                          >
+                            View All ({totalFilteredSales})
+                          </button>
+                        )}
+                      </div>
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[11px] font-extrabold text-slate-400">
-                        Voucher #KM-PUR-{s.id}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setActiveSlip({ ...s, slipType: "FARMER_SALE" })}
-                        className="px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                      >
-                        <Receipt className="w-3.5 h-3.5" /> 🖨️ 1/4 A4 Slip
-                      </button>
+                      {/* Right: Numbered Page Switcher */}
+                      {totalSalesPages > 1 && (
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            disabled={safeSalesPage <= 1}
+                            onClick={() => {
+                              setSalesCurrentPage((p) => Math.max(1, p - 1));
+                              setSalesExtraShown(0);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 text-xs font-extrabold text-slate-700 cursor-pointer"
+                          >
+                            ← Prev
+                          </button>
+                          {Array.from({ length: totalSalesPages }, (_, i) => i + 1).map((pageNum) => (
+                            <button
+                              key={pageNum}
+                              type="button"
+                              onClick={() => {
+                                setSalesCurrentPage(pageNum);
+                                setSalesExtraShown(0);
+                              }}
+                              className={`w-8 h-8 rounded-xl text-xs font-black transition cursor-pointer ${
+                                safeSalesPage === pageNum
+                                  ? "bg-[#14532D] text-amber-300 shadow-xs"
+                                  : "bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={safeSalesPage >= totalSalesPages}
+                            onClick={() => {
+                              setSalesCurrentPage((p) => Math.min(totalSalesPages, p + 1));
+                              setSalesExtraShown(0);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 text-xs font-extrabold text-slate-700 cursor-pointer"
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* ALIGNED BOTTOM FEATURE: CROP-WISE WHOLESALE EARNINGS & AVERAGE RATE BREAKDOWN */}
+                {cropBreakdownList.length > 0 && (
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-2xs space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                          📊 FARM INCOME ANALYTICS BY CROP
+                        </span>
+                        <h3 className="text-base sm:text-lg font-black text-slate-900">
+                          Crop-Wise Wholesale Revenue &amp; Average Rate Achieved
+                        </h3>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#14532D] text-xs font-extrabold">
+                        {cropBreakdownList.length} Distinct Crops Sold
+                      </span>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                      {cropBreakdownList.map((c) => {
+                        const avgRate =
+                          c.totalQty > 0 ? (c.totalValue / c.totalQty).toFixed(1) : "0.0";
+                        const sharePct =
+                          totalEarnings > 0
+                            ? Math.max(4, Math.round((c.totalValue / totalEarnings) * 100))
+                            : 100;
+                        return (
+                          <div
+                            key={c.name}
+                            className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h4 className="font-extrabold text-sm text-slate-900">{c.name}</h4>
+                                <p className="text-[11px] text-slate-500">
+                                  {c.batches} batch{c.batches > 1 ? "es" : ""} •{" "}
+                                  <strong>
+                                    {c.totalQty.toFixed(1)} {c.unit}
+                                  </strong>
+                                </p>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-[10px] font-black text-[#14532D]">
+                                Avg रु {avgRate}/{c.unit}
+                              </span>
+                            </div>
+
+                            <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                              <div
+                                className="h-full bg-[#14532D] rounded-full"
+                                style={{ width: `${sharePct}%` }}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-0.5">
+                              <span className="font-black text-[#14532D]">
+                                रु {c.totalValue.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-500">
+                                {c.pendingValue > 0
+                                  ? `⏳ रु ${c.pendingValue.toLocaleString()} pending`
+                                  : "✓ 100% Settled"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3402,174 +3954,344 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Enhanced Wholesale Harvest Batches & Status Stepper */}
+                {/* Enhanced Wholesale Harvest Batches & Status Stepper + Hybrid Smart Pagination */}
                 {(() => {
                   const subCounts = {
                     ALL: mySubmissions.length,
                     PENDING: mySubmissions.filter((s) => s.status === "PENDING").length,
-                    BOUGHT: mySubmissions.filter((s) => s.status === "BOUGHT" || s.status === "APPROVED").length,
+                    BOUGHT: mySubmissions.filter(
+                      (s) => s.status === "BOUGHT" || s.status === "APPROVED"
+                    ).length,
                     REJECTED: mySubmissions.filter((s) => s.status === "REJECTED").length,
                   };
 
-                  const displayedSubs =
-                    submissionFilter === "ALL"
-                      ? mySubmissions
-                      : mySubmissions.filter((s) =>
-                          submissionFilter === "BOUGHT"
-                            ? s.status === "BOUGHT" || s.status === "APPROVED"
-                            : s.status === submissionFilter
-                        );
+                  const cleanSubQuery = (subSearchQuery || "").trim().toLowerCase();
+                  const filteredSubs = mySubmissions
+                    .filter((s) => {
+                      if (
+                        submissionFilter === "BOUGHT" &&
+                        !(s.status === "BOUGHT" || s.status === "APPROVED")
+                      )
+                        return false;
+                      if (
+                        submissionFilter !== "ALL" &&
+                        submissionFilter !== "BOUGHT" &&
+                        s.status !== submissionFilter
+                      )
+                        return false;
+                      if (!cleanSubQuery) return true;
+                      return (
+                        `#km-sub-${s.id}`.includes(cleanSubQuery) ||
+                        String(s.id).includes(cleanSubQuery) ||
+                        (s.vegetable_name || "").toLowerCase().includes(cleanSubQuery) ||
+                        (s.pickup_location || "").toLowerCase().includes(cleanSubQuery)
+                      );
+                    })
+                    .sort((a, b) => {
+                      if (subSortBy === "OLDEST") return Number(a.id) - Number(b.id);
+                      if (subSortBy === "HIGH_VALUE") {
+                        const aVal = Number(a.quantity || 0) * Number(a.expected_price_per_unit || 0);
+                        const bVal = Number(b.quantity || 0) * Number(b.expected_price_per_unit || 0);
+                        return bVal - aVal;
+                      }
+                      return Number(b.id) - Number(a.id);
+                    });
+
+                  const totalSubsCount = filteredSubs.length;
+                  const totalSubPages = Math.max(1, Math.ceil(totalSubsCount / subPageSize));
+                  const safeSubPage = Math.min(subCurrentPage, totalSubPages);
+                  const subStartIdx = (safeSubPage - 1) * subPageSize;
+                  const subEndIdx = Math.min(
+                    totalSubsCount,
+                    subStartIdx + subPageSize + subExtraShown
+                  );
+                  const paginatedSubs = filteredSubs.slice(subStartIdx, subEndIdx);
+                  const remainingSubsBelow = Math.max(0, totalSubsCount - subEndIdx);
+                  const subProgressPct =
+                    totalSubsCount > 0
+                      ? Math.min(100, Math.round((subEndIdx / totalSubsCount) * 100))
+                      : 100;
 
                   return (
                     <div className="space-y-3.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-base sm:text-lg font-black text-slate-900">
-                          Your Submitted Harvest Batches ({mySubmissions.length})
-                        </h3>
-                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                          {[
-                            { id: "ALL", label: "All", count: subCounts.ALL },
-                            { id: "PENDING", label: "⏳ Pending", count: subCounts.PENDING },
-                            { id: "BOUGHT", label: "✓ Procured", count: subCounts.BOUGHT },
-                            { id: "REJECTED", label: "✕ Declined", count: subCounts.REJECTED },
-                          ].map((tab) => (
-                            <button
-                              key={tab.id}
-                              type="button"
-                              onClick={() => setSubmissionFilter(tab.id)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
-                                submissionFilter === tab.id
-                                  ? "bg-[#14532D] text-white shadow-2xs"
-                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              }`}
-                            >
-                              {tab.label} ({tab.count})
-                            </button>
-                          ))}
+                      <div className="bg-white rounded-2xl p-3.5 border border-slate-200/90 shadow-2xs space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-sm sm:text-base font-black text-slate-900">
+                            Your Submitted Harvest Batches ({mySubmissions.length})
+                          </h3>
+                          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                            {[
+                              { id: "ALL", label: "All", count: subCounts.ALL },
+                              { id: "PENDING", label: "⏳ Pending", count: subCounts.PENDING },
+                              { id: "BOUGHT", label: "✓ Procured", count: subCounts.BOUGHT },
+                              { id: "REJECTED", label: "✕ Declined", count: subCounts.REJECTED },
+                            ].map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => {
+                                  setSubmissionFilter(tab.id);
+                                  setSubCurrentPage(1);
+                                  setSubExtraShown(0);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
+                                  submissionFilter === tab.id
+                                    ? "bg-[#14532D] text-white shadow-2xs"
+                                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                }`}
+                              >
+                                {tab.label} ({tab.count})
+                              </button>
+                            ))}
+                          </div>
                         </div>
+
+                        {mySubmissions.length > 2 && (
+                          <div className="flex items-center gap-2 pt-1.5 border-t border-slate-100">
+                            <div className="relative flex-1">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                              <input
+                                type="text"
+                                value={subSearchQuery}
+                                onChange={(e) => {
+                                  setSubSearchQuery(e.target.value);
+                                  setSubCurrentPage(1);
+                                  setSubExtraShown(0);
+                                }}
+                                placeholder="Search crop or #KM-SUB..."
+                                className="w-full pl-8 pr-6 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs outline-none focus:bg-white focus:border-[#14532D]"
+                              />
+                            </div>
+                            <select
+                              value={subSortBy}
+                              onChange={(e) => {
+                                setSubSortBy(e.target.value);
+                                setSubCurrentPage(1);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-bold text-slate-700 outline-none cursor-pointer"
+                            >
+                              <option value="NEWEST">🕒 Newest</option>
+                              <option value="OLDEST">📅 Oldest</option>
+                              <option value="HIGH_VALUE">💰 Highest Value</option>
+                            </select>
+                          </div>
+                        )}
                       </div>
 
-                      {displayedSubs.length === 0 ? (
+                      {filteredSubs.length === 0 ? (
                         <div className="bg-white rounded-2xl p-6 text-center text-xs text-slate-500 border border-slate-200">
-                          {submissionFilter === "ALL"
+                          {submissionFilter === "ALL" && !subSearchQuery
                             ? "No harvest batches submitted yet."
-                            : `No ${submissionFilter.toLowerCase()} batches found.`}
+                            : "No matching harvest batches found."}
                         </div>
                       ) : (
-                        displayedSubs.map((s) => {
-                          const stepIdx =
-                            s.status === "BOUGHT"
-                              ? 3
-                              : s.status === "APPROVED"
-                              ? 2
-                              : s.status === "PENDING"
-                              ? 1
-                              : 0;
+                        <>
+                          {paginatedSubs.map((s) => {
+                            const stepIdx =
+                              s.status === "BOUGHT"
+                                ? 3
+                                : s.status === "APPROVED"
+                                ? 2
+                                : s.status === "PENDING"
+                                ? 1
+                                : 0;
 
-                          return (
-                            <div
-                              key={s.id}
-                              className="bg-white rounded-2xl p-4 sm:p-5 shadow-2xs border border-slate-200 space-y-3"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[10px] font-black text-slate-600">
-                                      #KM-SUB-{s.id}
-                                    </span>
-                                    <h4 className="font-extrabold text-base text-slate-900">
-                                      {s.vegetable_name}
-                                    </h4>
+                            return (
+                              <div
+                                key={s.id}
+                                className="bg-white rounded-2xl p-4 sm:p-5 shadow-2xs border border-slate-200 space-y-3"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[10px] font-black text-slate-600">
+                                        #KM-SUB-{s.id}
+                                      </span>
+                                      <h4 className="font-extrabold text-base text-slate-900">
+                                        {s.vegetable_name}
+                                      </h4>
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-0.5">
+                                      {s.quantity} {s.unit} @ रु {s.expected_price_per_unit}/{s.unit} •
+                                      📍 {s.pickup_location}
+                                    </p>
                                   </div>
-                                  <p className="text-xs text-slate-500 mt-0.5">
-                                    {s.quantity} {s.unit} @ रु {s.expected_price_per_unit}/{s.unit} •
-                                    📍 {s.pickup_location}
-                                  </p>
+
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
+                                        s.status === "BOUGHT"
+                                          ? "bg-emerald-600 text-white shadow-2xs"
+                                          : s.status === "APPROVED"
+                                          ? "bg-emerald-100 text-emerald-800"
+                                          : s.status === "REJECTED"
+                                          ? "bg-red-100 text-red-700"
+                                          : "bg-amber-100 text-amber-800"
+                                      }`}
+                                    >
+                                      {s.status === "BOUGHT" ? "✓ BOUGHT BY KRISHIMART" : s.status}
+                                    </span>
+                                    {s.status === "PENDING" && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleDeleteSubmission(s.id, s.vegetable_name)
+                                        }
+                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition"
+                                        title="Withdraw Pending Offer"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                  <span
-                                    className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold ${
-                                      s.status === "BOUGHT"
-                                        ? "bg-emerald-600 text-white shadow-2xs"
-                                        : s.status === "APPROVED"
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : s.status === "REJECTED"
-                                        ? "bg-red-100 text-red-700"
-                                        : "bg-amber-100 text-amber-800"
-                                    }`}
-                                  >
-                                    {s.status === "BOUGHT" ? "✓ BOUGHT BY KRISHIMART" : s.status}
-                                  </span>
-                                  {s.status === "PENDING" && (
+                                <p className="text-xs text-slate-600 leading-relaxed">
+                                  {s.vegetable_description}
+                                </p>
+
+                                {s.admin_remarks && (
+                                  <div className="p-2.5 rounded-xl bg-emerald-50 text-xs text-emerald-950 border border-emerald-100 leading-snug">
+                                    <strong>Admin Remark:</strong> {s.admin_remarks}
+                                  </div>
+                                )}
+
+                                {/* Visual Wholesale 3-Step Lifecycle Tracker */}
+                                {s.status === "REJECTED" ? (
+                                  <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3 py-2 text-xs text-red-700 font-semibold flex items-center justify-between">
+                                    <span>✕ Offer was declined by Admin. See remarks above.</span>
+                                    <span className="text-[10px] font-extrabold uppercase">
+                                      Declined
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-2.5">
+                                    <div className="grid grid-cols-3 gap-1.5 text-center">
+                                      {[
+                                        { step: 1, title: "1. Submitted", sub: "Waiting Admin" },
+                                        { step: 2, title: "2. Approved", sub: "Quality Checked" },
+                                        {
+                                          step: 3,
+                                          title: "3. Procured (Bought)",
+                                          sub: "Payout Added",
+                                        },
+                                      ].map((st) => {
+                                        const done = stepIdx >= st.step;
+                                        const current = stepIdx === st.step;
+                                        return (
+                                          <div key={st.step} className="flex flex-col items-center">
+                                            <div
+                                              className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center transition ${
+                                                done
+                                                  ? "bg-[#14532D] text-white shadow-2xs"
+                                                  : "bg-slate-200 text-slate-500"
+                                              } ${current ? "ring-2 ring-emerald-300" : ""}`}
+                                            >
+                                              {done ? "✓" : st.step}
+                                            </div>
+                                            <p
+                                              className={`text-[10px] font-extrabold mt-0.5 ${
+                                                done ? "text-[#14532D]" : "text-slate-400"
+                                              }`}
+                                            >
+                                              {st.title}
+                                            </p>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {/* HYBRID SMART PAGINATION + "SHOW MORE" DOCK (SUBMITTED HARVEST BATCHES) */}
+                          {totalSubsCount > subPageSize && (
+                            <div className="bg-white rounded-2xl p-3.5 border border-slate-200/90 shadow-2xs space-y-2.5">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
+                                <span>
+                                  Showing{" "}
+                                  <strong className="text-slate-900">
+                                    {subStartIdx + 1}–{subEndIdx}
+                                  </strong>{" "}
+                                  of <strong className="text-[#14532D]">{totalSubsCount}</strong>{" "}
+                                  batches
+                                </span>
+                                <span className="text-[#14532D]">
+                                  Page {safeSubPage}/{totalSubPages}
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                                <div
+                                  className="h-full bg-[#14532D] rounded-full transition-all duration-300"
+                                  style={{ width: `${subProgressPct}%` }}
+                                />
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  {remainingSubsBelow > 0 && (
                                     <button
                                       type="button"
-                                      onClick={() => handleDeleteSubmission(s.id, s.vegetable_name)}
-                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition"
-                                      title="Withdraw Pending Offer"
+                                      onClick={() => setSubExtraShown((prev) => prev + subPageSize)}
+                                      className="px-3 py-1.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-[11px] font-extrabold cursor-pointer"
                                     >
-                                      <Trash2 className="w-4 h-4" />
+                                      + Show {Math.min(subPageSize, remainingSubsBelow)} More (
+                                      {remainingSubsBelow} left)
+                                    </button>
+                                  )}
+                                  {subExtraShown > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSubExtraShown(0)}
+                                      className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold cursor-pointer"
+                                    >
+                                      ↑ Show Less
                                     </button>
                                   )}
                                 </div>
-                              </div>
 
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                {s.vegetable_description}
-                              </p>
-
-                              {s.admin_remarks && (
-                                <div className="p-2.5 rounded-xl bg-emerald-50 text-xs text-emerald-950 border border-emerald-100 leading-snug">
-                                  <strong>Admin Remark:</strong> {s.admin_remarks}
-                                </div>
-                              )}
-
-                              {/* Visual Wholesale 3-Step Lifecycle Tracker */}
-                              {s.status === "REJECTED" ? (
-                                <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3 py-2 text-xs text-red-700 font-semibold flex items-center justify-between">
-                                  <span>✕ Offer was declined by Admin. See remarks above.</span>
-                                  <span className="text-[10px] font-extrabold uppercase">
-                                    Declined
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-2.5">
-                                  <div className="grid grid-cols-3 gap-1.5 text-center">
-                                    {[
-                                      { step: 1, title: "1. Submitted", sub: "Waiting Admin" },
-                                      { step: 2, title: "2. Approved", sub: "Quality Checked" },
-                                      { step: 3, title: "3. Procured (Bought)", sub: "Payout Added" },
-                                    ].map((st) => {
-                                      const done = stepIdx >= st.step;
-                                      const current = stepIdx === st.step;
-                                      return (
-                                        <div key={st.step} className="flex flex-col items-center">
-                                          <div
-                                            className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center transition ${
-                                              done
-                                                ? "bg-[#14532D] text-white shadow-2xs"
-                                                : "bg-slate-200 text-slate-500"
-                                            } ${current ? "ring-2 ring-emerald-300" : ""}`}
-                                          >
-                                            {done ? "✓" : st.step}
-                                          </div>
-                                          <p
-                                            className={`text-[10px] font-extrabold mt-0.5 ${
-                                              done ? "text-[#14532D]" : "text-slate-400"
-                                            }`}
-                                          >
-                                            {st.title}
-                                          </p>
-                                        </div>
-                                      );
-                                    })}
+                                {totalSubPages > 1 && (
+                                  <div className="flex items-center gap-1 ml-auto">
+                                    {Array.from({ length: totalSubPages }, (_, i) => i + 1).map(
+                                      (pNum) => (
+                                        <button
+                                          key={pNum}
+                                          type="button"
+                                          onClick={() => {
+                                            setSubCurrentPage(pNum);
+                                            setSubExtraShown(0);
+                                          }}
+                                          className={`w-7 h-7 rounded-lg text-[11px] font-black cursor-pointer ${
+                                            safeSubPage === pNum
+                                              ? "bg-[#14532D] text-amber-300"
+                                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                          }`}
+                                        >
+                                          {pNum}
+                                        </button>
+                                      )
+                                    )}
                                   </div>
-                                </div>
-                              )}
+                                )}
+                              </div>
                             </div>
-                          );
-                        })
+                          )}
+                        </>
                       )}
+
+                      {/* Aligned Bottom Farmer Wholesale Guarantee Card */}
+                      <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 space-y-1.5 text-xs text-emerald-950">
+                        <p className="font-black text-[#14532D] flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                          <span>KrishiMart Direct Farm Procurement Guarantee</span>
+                        </p>
+                        <p className="text-[11px] text-emerald-900 leading-relaxed">
+                          Once our Hub team approves and procures your batch, an official{" "}
+                          <strong>#KM-PUR</strong> digital payout voucher is emailed to you and
+                          added under <strong>Sold to Admin</strong>.
+                        </p>
+                      </div>
                     </div>
                   );
                 })()}
@@ -3578,7 +4300,7 @@ export default function App() {
           </div>
         )}
 
-        {/* DEDICATED "MY ORDERS" TRACKING VIEW (DARAZ-STYLE MOBILE & DESKTOP UX) */}
+        {/* DEDICATED "MY ORDERS" TRACKING VIEW (DARAZ-STYLE MOBILE & DESKTOP UX + HYBRID SMART PAGINATION) */}
         {activeTab === "orders" && user && (() => {
           const orderCounts = {
             ALL: myOrders.length,
@@ -3587,15 +4309,141 @@ export default function App() {
             DELIVERED: myOrders.filter((o) => o.status === "DELIVERED").length,
             CANCELLED: myOrders.filter((o) => o.status === "CANCELLED").length,
           };
-          const totalSavedAmount = myOrders.reduce((acc, o) => {
-            if (o.status === "CANCELLED") return acc;
-            const { discAmt } = getCustomerOrderPricing(o);
-            return acc + discAmt;
-          }, 0);
-          const displayedOrders =
-            orderStatusFilter === "ALL"
-              ? myOrders
-              : myOrders.filter((o) => o.status === orderStatusFilter);
+
+          let totalSavedAmount = 0;
+          let totalNetSpent = 0;
+          let totalWeightOrderedKg = 0;
+          let freeDeliveryOrdersCount = 0;
+
+          myOrders.forEach((o) => {
+            if (o.status === "CANCELLED") return;
+            const { discAmt, netTotal, isFreeDelivery } = getCustomerOrderPricing(o);
+            totalSavedAmount += discAmt;
+            totalNetSpent += netTotal;
+            if (isFreeDelivery) freeDeliveryOrdersCount += 1;
+            const u = (o.product_unit || "kg").toLowerCase();
+            const q = Number(o.quantity || 0);
+            if (u === "g") totalWeightOrderedKg += q / 1000;
+            else if (u === "quintal") totalWeightOrderedKg += q * 100;
+            else totalWeightOrderedKg += q;
+          });
+
+          const cleanOrderQuery = (ordersSearchQuery || "").trim().toLowerCase();
+          const filteredOrders = myOrders
+            .filter((o) => {
+              if (orderStatusFilter !== "ALL" && o.status !== orderStatusFilter) return false;
+              if (!cleanOrderQuery) return true;
+              const ordRef = `#km-ord-${o.id}`;
+              return (
+                ordRef.includes(cleanOrderQuery) ||
+                String(o.id).includes(cleanOrderQuery) ||
+                (o.product_name || "").toLowerCase().includes(cleanOrderQuery) ||
+                (o.delivery_address || "").toLowerCase().includes(cleanOrderQuery) ||
+                (o.contact_phone || "").toLowerCase().includes(cleanOrderQuery) ||
+                (o.status || "").toLowerCase().includes(cleanOrderQuery)
+              );
+            })
+            .sort((a, b) => {
+              if (ordersSortBy === "OLDEST") return Number(a.id) - Number(b.id);
+              if (ordersSortBy === "HIGH_AMOUNT") {
+                return getCustomerOrderPricing(b).netTotal - getCustomerOrderPricing(a).netTotal;
+              }
+              if (ordersSortBy === "LOW_AMOUNT") {
+                return getCustomerOrderPricing(a).netTotal - getCustomerOrderPricing(b).netTotal;
+              }
+              if (ordersSortBy === "ACTIVE_FIRST") {
+                const rank = { PENDING: 3, CONFIRMED: 2, DELIVERED: 1, CANCELLED: 0 };
+                const diff = (rank[b.status] ?? 0) - (rank[a.status] ?? 0);
+                if (diff !== 0) return diff;
+              }
+              return Number(b.id) - Number(a.id);
+            });
+
+          // Hybrid Smart Pagination + "Show More" Dock Calculations
+          const totalFilteredOrders = filteredOrders.length;
+          const totalOrderPages = Math.max(1, Math.ceil(totalFilteredOrders / ordersPageSize));
+          const safeOrderPage = Math.min(ordersCurrentPage, totalOrderPages);
+          const orderStartIdx = (safeOrderPage - 1) * ordersPageSize;
+          const orderEndIdx = Math.min(
+            totalFilteredOrders,
+            orderStartIdx + ordersPageSize + ordersExtraShown
+          );
+          const paginatedOrders = filteredOrders.slice(orderStartIdx, orderEndIdx);
+          const remainingOrdersBelow = Math.max(0, totalFilteredOrders - orderEndIdx);
+          const orderProgressPct =
+            totalFilteredOrders > 0
+              ? Math.min(100, Math.round((orderEndIdx / totalFilteredOrders) * 100))
+              : 100;
+
+          // Build "Buy Again • Your Frequently Ordered Farm Picks" list for aligned bottom section
+          const frequentMap = {};
+          for (const o of myOrders) {
+            const key = o.product || o.product_name;
+            if (!key) continue;
+            if (!frequentMap[key]) {
+              const liveProd = (Array.isArray(dbProducts) ? dbProducts : []).find(
+                (p) => Number(p.id) === Number(o.product) || p.name === o.product_name
+              );
+              frequentMap[key] = {
+                key,
+                product: liveProd || null,
+                name: liveProd?.name || o.product_name || "Farm Produce",
+                unit: liveProd?.unit || o.product_unit || "kg",
+                price: Number(liveProd?.price || getCustomerOrderPricing(o).unitPrice || 0),
+                orderCount: 0,
+                totalQty: 0,
+                lastOrderDate: o.created_at,
+              };
+            }
+            frequentMap[key].orderCount += 1;
+            frequentMap[key].totalQty += Number(o.quantity || 1);
+          }
+          const frequentOrderedPicks = Object.values(frequentMap)
+            .filter((item) => item.product && Number(item.product.stock_quantity) > 0)
+            .sort((a, b) => b.orderCount - a.orderCount)
+            .slice(0, 4);
+
+          const handleExportMyOrdersCsv = () => {
+            if (myOrders.length === 0) return;
+            const headers = [
+              "Order ID",
+              "Date",
+              "Product",
+              "Quantity",
+              "Unit",
+              "Produce Subtotal (NPR)",
+              "Discount (%)",
+              "Delivery Charge (NPR)",
+              "Total Payable (NPR)",
+              "Status",
+              "Delivery Address",
+            ];
+            const rows = myOrders.map((o) => {
+              const pr = getCustomerOrderPricing(o);
+              return [
+                `#KM-ORD-${o.id}`,
+                new Date(o.created_at).toLocaleDateString(),
+                `"${(o.product_name || "").replace(/"/g, '""')}"`,
+                o.quantity,
+                o.product_unit || "kg",
+                pr.subtotal.toFixed(2),
+                pr.discPct,
+                pr.isFreeDelivery ? "0.00 (FREE)" : pr.deliveryCharge.toFixed(2),
+                pr.netTotal.toFixed(2),
+                o.status,
+                `"${(o.delivery_address || "").replace(/"/g, '""')}"`,
+              ];
+            });
+            const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `KrishiMart_My_Orders_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+            showToast("Order history exported as CSV!");
+          };
 
           return (
           <div className="max-w-5xl mx-auto px-3 sm:px-8 py-5 sm:py-10 space-y-5">
@@ -3608,12 +4456,26 @@ export default function App() {
                   {tr("My Harvest Orders", "मेरा अर्डरहरू")}
                 </h2>
               </div>
-              <button
-                onClick={() => { setQuickViewProduct(null); setActiveTab("marketplace"); }}
-                className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
-              >
-                + Continue Shopping
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {myOrders.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleExportMyOrdersCsv}
+                    className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:border-[#14532D] text-slate-700 hover:text-[#14532D] text-xs font-extrabold cursor-pointer shadow-2xs transition"
+                  >
+                    📥 Export CSV
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setQuickViewProduct(null);
+                    setActiveTab("marketplace");
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-bold cursor-pointer shadow-xs transition"
+                >
+                  + Continue Shopping
+                </button>
+              </div>
             </div>
 
             {/* Daraz-Style 4-Card Mobile-First Summary Strip */}
@@ -3626,6 +4488,9 @@ export default function App() {
                   <p className="text-lg sm:text-xl font-black text-slate-900 mt-0.5">
                     {orderCounts.ALL}
                   </p>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                    ⚖️ {totalWeightOrderedKg.toFixed(1)} kg ordered
+                  </p>
                 </div>
                 <div className="bg-blue-50/60 rounded-2xl p-3.5 border border-blue-200/80 shadow-2xs">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
@@ -3633,6 +4498,9 @@ export default function App() {
                   </p>
                   <p className="text-lg sm:text-xl font-black text-blue-900 mt-0.5">
                     {orderCounts.PENDING + orderCounts.CONFIRMED}
+                  </p>
+                  <p className="text-[10px] text-blue-700 font-semibold mt-0.5">
+                    ⏳ {orderCounts.PENDING} Pending • {orderCounts.CONFIRMED} Confirmed
                   </p>
                 </div>
                 <div className="bg-emerald-50/70 rounded-2xl p-3.5 border border-emerald-200/80 shadow-2xs">
@@ -3642,6 +4510,9 @@ export default function App() {
                   <p className="text-lg sm:text-xl font-black text-[#14532D] mt-0.5">
                     {orderCounts.DELIVERED}
                   </p>
+                  <p className="text-[10px] text-emerald-700 font-semibold mt-0.5">
+                    🚚 {freeDeliveryOrdersCount} Free Deliveries
+                  </p>
                 </div>
                 <div className="bg-amber-50/70 rounded-2xl p-3.5 border border-amber-200/80 shadow-2xs">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
@@ -3650,42 +4521,135 @@ export default function App() {
                   <p className="text-lg sm:text-xl font-black text-amber-700 mt-0.5">
                     रु {totalSavedAmount.toFixed(2)}
                   </p>
+                  <p className="text-[10px] text-amber-800 font-semibold mt-0.5">
+                    Net Active/Spent: रु {totalNetSpent.toFixed(0)}
+                  </p>
                 </div>
               </div>
             )}
 
-            {/* Daraz-Style Horizontal Swipeable Status Filter Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-              {[
-                { id: "ALL", label: "All Orders", count: orderCounts.ALL },
-                { id: "PENDING", label: "To Confirm", count: orderCounts.PENDING },
-                { id: "CONFIRMED", label: "Confirmed & Packing", count: orderCounts.CONFIRMED },
-                { id: "DELIVERED", label: "Delivered", count: orderCounts.DELIVERED },
-                { id: "CANCELLED", label: "Cancelled", count: orderCounts.CANCELLED },
-              ].map((tab) => {
-                const active = orderStatusFilter === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setOrderStatusFilter(tab.id)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
-                      active
-                        ? "bg-[#14532D] text-white shadow-xs"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                    }`}
+            {/* Unified Filter Tabs + Search, Sort, View Density & Page-Size Toolbar */}
+            <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-2xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                  {[
+                    { id: "ALL", label: "All Orders", count: orderCounts.ALL },
+                    { id: "PENDING", label: "To Confirm", count: orderCounts.PENDING },
+                    { id: "CONFIRMED", label: "Confirmed & Packing", count: orderCounts.CONFIRMED },
+                    { id: "DELIVERED", label: "Delivered", count: orderCounts.DELIVERED },
+                    { id: "CANCELLED", label: "Cancelled", count: orderCounts.CANCELLED },
+                  ].map((tab) => {
+                    const active = orderStatusFilter === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          setOrderStatusFilter(tab.id);
+                          setOrdersCurrentPage(1);
+                          setOrdersExtraShown(0);
+                        }}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                          active
+                            ? "bg-[#14532D] text-white shadow-xs"
+                            : "bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                            active ? "bg-amber-400 text-slate-950" : "bg-white text-slate-600"
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Density Toggle & Per-Page Selector */}
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200/70">
+                    {[
+                      { id: "detailed", label: "📇 Detailed" },
+                      { id: "compact", label: "📋 Compact" },
+                    ].map((vm) => (
+                      <button
+                        key={vm.id}
+                        type="button"
+                        onClick={() => setOrdersViewMode(vm.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition cursor-pointer ${
+                          ordersViewMode === vm.id
+                            ? "bg-white text-[#14532D] shadow-2xs"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        {vm.label}
+                      </button>
+                    ))}
+                  </div>
+                  <select
+                    value={ordersPageSize}
+                    onChange={(e) => {
+                      setOrdersPageSize(Number(e.target.value));
+                      setOrdersCurrentPage(1);
+                      setOrdersExtraShown(0);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-extrabold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
                   >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                        active ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-600"
-                      }`}
+                    <option value={4}>Show 4 / page</option>
+                    <option value={8}>Show 8 / page</option>
+                    <option value={9999}>Show All ({totalFilteredOrders})</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Search & Sort Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 border-t border-slate-100">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={ordersSearchQuery}
+                    onChange={(e) => {
+                      setOrdersSearchQuery(e.target.value);
+                      setOrdersCurrentPage(1);
+                      setOrdersExtraShown(0);
+                    }}
+                    placeholder="Search order #KM-ORD-37, produce name (Pea, Apple, Cauliflower), or address..."
+                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium outline-none focus:bg-white focus:border-[#14532D]"
+                  />
+                  {ordersSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrdersSearchQuery("");
+                        setOrdersCurrentPage(1);
+                        setOrdersExtraShown(0);
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                     >
-                      {tab.count}
-                    </span>
-                  </button>
-                );
-              })}
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  value={ordersSortBy}
+                  onChange={(e) => {
+                    setOrdersSortBy(e.target.value);
+                    setOrdersCurrentPage(1);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 outline-none focus:border-[#14532D] cursor-pointer"
+                >
+                  <option value="NEWEST">🕒 Sort: Newest First</option>
+                  <option value="OLDEST">📅 Sort: Oldest First</option>
+                  <option value="ACTIVE_FIRST">⚡ Sort: Active / Pending First</option>
+                  <option value="HIGH_AMOUNT">💰 Sort: Highest Amount First</option>
+                  <option value="LOW_AMOUNT">🏷️ Sort: Lowest Amount First</option>
+                </select>
+              </div>
             </div>
 
             {loadingUserData && myOrders.length === 0 ? (
@@ -3714,245 +4678,633 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            ) : displayedOrders.length === 0 ? (
+            ) : filteredOrders.length === 0 ? (
               <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 space-y-3">
                 <PackageCheck className="w-10 h-10 text-slate-400 mx-auto" />
                 <p className="text-sm font-bold text-slate-700">
-                  {orderStatusFilter === "ALL"
+                  {orderStatusFilter === "ALL" && !ordersSearchQuery
                     ? "No orders placed yet"
-                    : `No ${orderStatusFilter.toLowerCase()} orders found`}
+                    : "No matching orders found"}
                 </p>
                 <p className="text-xs text-slate-500">
                   Add fresh vegetables or fruits to your basket to place an order directly from Nepali farms.
                 </p>
-                {orderStatusFilter !== "ALL" && (
+                {(orderStatusFilter !== "ALL" || ordersSearchQuery) && (
                   <button
                     type="button"
-                    onClick={() => setOrderStatusFilter("ALL")}
+                    onClick={() => {
+                      setOrderStatusFilter("ALL");
+                      setOrdersSearchQuery("");
+                      setOrdersCurrentPage(1);
+                      setOrdersExtraShown(0);
+                    }}
                     className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
                   >
-                    View All Orders
+                    Reset Filters &amp; View All Orders
                   </button>
                 )}
               </div>
             ) : (
-              <div className="space-y-3.5">
-                {displayedOrders.map((o) => {
-                  const {
-                    subtotal,
-                    unitPrice,
-                    discPct,
-                    discAmt,
-                    deliveryCharge,
-                    distanceKm,
-                    isFreeDelivery,
-                    deliveryLat,
-                    deliveryLng,
-                    netTotal,
-                  } = getCustomerOrderPricing(o);
-                  const stepIdx =
-                    o.status === "DELIVERED"
-                      ? 3
-                      : o.status === "CONFIRMED"
-                      ? 2
-                      : o.status === "PENDING"
-                      ? 1
-                      : 0;
-                  const matchedProductForReorder = (Array.isArray(dbProducts) ? dbProducts : []).find(
-                    (p) => p.id === o.product || p.name === o.product_name
-                  );
+              <div className="space-y-4">
+                {ordersViewMode === "compact" ? (
+                  <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden divide-y divide-slate-100">
+                    {paginatedOrders.map((o) => {
+                      const {
+                        unitPrice,
+                        discPct,
+                        deliveryCharge,
+                        distanceKm,
+                        isFreeDelivery,
+                        deliveryLat,
+                        deliveryLng,
+                        netTotal,
+                      } = getCustomerOrderPricing(o);
+                      const matchedProductForReorder = (Array.isArray(dbProducts) ? dbProducts : []).find(
+                        (p) => p.id === o.product || p.name === o.product_name
+                      );
 
-                  return (
-                  <div
-                    key={o.id}
-                    className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs hover:shadow-md transition space-y-3.5"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[11px] font-black text-slate-600">
-                            #KM-ORD-{o.id}
-                          </span>
-                          <h3 className="font-extrabold text-sm sm:text-base text-slate-900">
-                            {o.product_name}
-                          </h3>
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                              o.status === "DELIVERED"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : o.status === "CONFIRMED"
-                                ? "bg-blue-100 text-blue-800"
-                                : o.status === "CANCELLED"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-amber-100 text-amber-800"
-                            }`}
-                          >
-                            {o.status}
-                          </span>
-                          {discPct > 0 && (
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-[#14532D] border border-emerald-200">
-                              🎉 {discPct}% OFF
+                      return (
+                        <div
+                          key={o.id}
+                          className="p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50/80 transition"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-black text-slate-700 shrink-0">
+                              #KM-ORD-{o.id}
                             </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          Qty:{" "}
-                          <strong className="text-slate-800">
-                            {o.quantity} {o.product_unit}
-                          </strong>{" "}
-                          (रु {unitPrice.toFixed(2)}/{o.product_unit || "unit"}) • Address:{" "}
-                          <strong className="text-slate-800">{o.delivery_address}</strong> • Phone:{" "}
-                          <strong className="text-slate-800">{o.contact_phone}</strong>
-                        </p>
-                        <p className="text-[11px] text-slate-400">
-                          Ordered on {new Date(o.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
-                        <div className="text-left sm:text-right space-y-0.5">
-                          <p className="text-[10px] font-bold text-slate-500">
-                            Produce: रु {subtotal.toFixed(2)}{" "}
-                            {discPct > 0 ? `(-${discPct}%)` : ""} •{" "}
-                            <span className="text-emerald-700">
-                              Delivery{distanceKm ? ` (${distanceKm} km)` : ""}:{" "}
-                              {isFreeDelivery ? "FREE" : `+रु ${deliveryCharge.toFixed(2)}`}
-                            </span>
-                          </p>
-                          <p className="text-base sm:text-lg font-black text-[#14532D]">
-                            Total Payable: रु {netTotal.toFixed(2)}
-                          </p>
-                          {deliveryLat && deliveryLng && (
-                            <a
-                              href={`https://www.google.com/maps/dir/${KRISHIMART_HUB.lat},${KRISHIMART_HUB.lng}/${deliveryLat},${deliveryLng}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-700 hover:underline"
-                            >
-                              🗺️ View Delivery Route on Map
-                            </a>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
-                            className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                          >
-                            <Receipt className="w-3.5 h-3.5" /> Receipt
-                          </button>
-                          {o.status === "DELIVERED" && (() => {
-                            const alreadyReviewed = stories.some(
-                              (s) =>
-                                s.story_type === "BUYER_REVIEW" &&
-                                ((s.order_id && Number(s.order_id) === Number(o.id)) ||
-                                  (s.author_name === user?.full_name &&
-                                    ((s.product_id && Number(s.product_id) === Number(o.product)) ||
-                                      (s.product_name || s.title || "")
-                                        .toLowerCase()
-                                        .includes((o.product_name || "").toLowerCase()))))
-                            );
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setReviewTargetProduct({
-                                    product_id: o.product,
-                                    product_name: o.product_name,
-                                    order_id: o.id,
-                                  });
-                                  setStoryForm({
-                                    title: `${o.product_name} — Fresh & Delivered on Time!`,
-                                    content: "",
-                                    rating: 5,
-                                  });
-                                  setStoryModalOpen(true);
-                                }}
-                                className={`px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer ${
-                                  alreadyReviewed
-                                    ? "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
-                                    : "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-2xs"
-                                }`}
-                                title="Rate & review this delivered product"
-                              >
-                                <Star className="w-3.5 h-3.5 fill-current" />
-                                {alreadyReviewed ? "Add / Update Review" : "Write Review"}
-                              </button>
-                            );
-                          })()}
-                          {matchedProductForReorder && Number(matchedProductForReorder.stock_quantity) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => handleAddToBasket(matchedProductForReorder, 1)}
-                              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-[#14532D] text-xs font-bold transition cursor-pointer"
-                              title="Add this produce item to basket again"
-                            >
-                              ↻ Buy Again
-                            </button>
-                          )}
-                          {o.status === "PENDING" && (
-                            <button
-                              onClick={() => handleCancelOrder(o.id)}
-                              className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Daraz-Style 3-Step Visual Order Progress Tracker */}
-                    {o.status === "CANCELLED" ? (
-                      <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-red-700 font-semibold">
-                        <span>✕ This order was cancelled and stock has been restored.</span>
-                        <span className="text-[11px] font-bold uppercase">Cancelled</span>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-3">
-                        <div className="grid grid-cols-3 gap-2 relative">
-                          {[
-                            { step: 1, title: "1. Order Placed", sub: "Received by Hub" },
-                            {
-                              step: 2,
-                              title: "2. Confirmed & Packing",
-                              sub: discPct > 0 ? `Approved (${discPct}% OFF)` : "Quality Checked",
-                            },
-                            { step: 3, title: "3. Delivered", sub: "Handed to Customer" },
-                          ].map((st) => {
-                            const done = stepIdx >= st.step;
-                            const current = stepIdx === st.step;
-                            return (
-                              <div key={st.step} className="flex flex-col items-center text-center">
-                                <div
-                                  className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center transition ${
-                                    done
-                                      ? "bg-[#14532D] text-white shadow-2xs"
-                                      : "bg-slate-200 text-slate-500"
-                                  } ${current ? "ring-4 ring-emerald-200/80" : ""}`}
-                                >
-                                  {done ? "✓" : st.step}
-                                </div>
-                                <p
-                                  className={`text-[11px] font-extrabold mt-1 ${
-                                    done ? "text-[#14532D]" : "text-slate-400"
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="font-extrabold text-sm text-slate-900 truncate">
+                                  {o.product_name}
+                                </h4>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    o.status === "DELIVERED"
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : o.status === "CONFIRMED"
+                                      ? "bg-blue-100 text-blue-800"
+                                      : o.status === "CANCELLED"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-amber-100 text-amber-800"
                                   }`}
                                 >
-                                  {st.title}
-                                </p>
-                                <p className="text-[9px] text-slate-400 hidden sm:block">{st.sub}</p>
+                                  {o.status}
+                                </span>
+                                {discPct > 0 && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-[#14532D]">
+                                    -{discPct}%
+                                  </span>
+                                )}
                               </div>
-                            );
-                          })}
+                              <p className="text-[11px] text-slate-500 truncate">
+                                {o.quantity} {o.product_unit} (रु {unitPrice.toFixed(0)}/{o.product_unit}) •{" "}
+                                {distanceKm ? `${distanceKm} km` : "Local"} (
+                                {isFreeDelivery ? "FREE Delivery" : `+रु ${deliveryCharge.toFixed(0)}`}) •{" "}
+                                {new Date(o.created_at).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 ml-auto">
+                            <span className="text-sm sm:text-base font-black text-[#14532D] mr-1">
+                              रु {netTotal.toFixed(2)}
+                            </span>
+                            {deliveryLat && deliveryLng && (
+                              <button
+                                type="button"
+                                onClick={() => setCustomerRouteModalOrder(o)}
+                                className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-extrabold cursor-pointer"
+                                title="Preview Delivery Route on Map"
+                              >
+                                🗺️ Map
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
+                              className="px-2.5 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-[11px] font-bold cursor-pointer"
+                            >
+                              Receipt
+                            </button>
+                            {matchedProductForReorder &&
+                              Number(matchedProductForReorder.stock_quantity) > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddToBasket(matchedProductForReorder, 1)}
+                                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-[#14532D] text-[11px] font-bold cursor-pointer"
+                                >
+                                  ↻ Buy Again
+                                </button>
+                              )}
+                            {o.status === "PENDING" && (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelOrder(o.id)}
+                                className="px-2.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-[11px] font-bold cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
-                  );
-                })}
+                ) : (
+                  <div className="space-y-3.5">
+                    {paginatedOrders.map((o) => {
+                      const {
+                        subtotal,
+                        unitPrice,
+                        discPct,
+                        discAmt,
+                        deliveryCharge,
+                        distanceKm,
+                        isFreeDelivery,
+                        deliveryLat,
+                        deliveryLng,
+                        netTotal,
+                      } = getCustomerOrderPricing(o);
+                      const stepIdx =
+                        o.status === "DELIVERED"
+                          ? 3
+                          : o.status === "CONFIRMED"
+                          ? 2
+                          : o.status === "PENDING"
+                          ? 1
+                          : 0;
+                      const matchedProductForReorder = (Array.isArray(dbProducts) ? dbProducts : []).find(
+                        (p) => p.id === o.product || p.name === o.product_name
+                      );
+
+                      return (
+                        <div
+                          key={o.id}
+                          className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs hover:shadow-md transition space-y-3.5"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[11px] font-black text-slate-600">
+                                  #KM-ORD-{o.id}
+                                </span>
+                                <h3 className="font-extrabold text-sm sm:text-base text-slate-900">
+                                  {o.product_name}
+                                </h3>
+                                <span
+                                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                    o.status === "DELIVERED"
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : o.status === "CONFIRMED"
+                                      ? "bg-blue-100 text-blue-800"
+                                      : o.status === "CANCELLED"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-amber-100 text-amber-800"
+                                  }`}
+                                >
+                                  {o.status}
+                                </span>
+                                {discPct > 0 && (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-[#14532D] border border-emerald-200">
+                                    🎉 {discPct}% OFF
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Qty:{" "}
+                                <strong className="text-slate-800">
+                                  {o.quantity} {o.product_unit}
+                                </strong>{" "}
+                                (रु {unitPrice.toFixed(2)}/{o.product_unit || "unit"}) • Address:{" "}
+                                <strong className="text-slate-800">{o.delivery_address}</strong> •
+                                Phone: <strong className="text-slate-800">{o.contact_phone}</strong>
+                              </p>
+                              <p className="text-[11px] text-slate-400">
+                                Ordered on {new Date(o.created_at).toLocaleDateString()}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
+                              <div className="text-left sm:text-right space-y-0.5">
+                                <p className="text-[10px] font-bold text-slate-500">
+                                  Produce: रु {subtotal.toFixed(2)}{" "}
+                                  {discPct > 0 ? `(-${discPct}%)` : ""} •{" "}
+                                  <span className="text-emerald-700">
+                                    Delivery{distanceKm ? ` (${distanceKm} km)` : ""}:{" "}
+                                    {isFreeDelivery ? "FREE" : `+रु ${deliveryCharge.toFixed(2)}`}
+                                  </span>
+                                </p>
+                                <p className="text-base sm:text-lg font-black text-[#14532D]">
+                                  Total Payable: रु {netTotal.toFixed(2)}
+                                </p>
+                                {deliveryLat && deliveryLng && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomerRouteModalOrder(o)}
+                                    className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-700 hover:underline cursor-pointer"
+                                  >
+                                    🗺️ View Delivery Route on Map
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveSlip({ ...o, slipType: "CUSTOMER_ORDER" })}
+                                  className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-[#14532D] text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                                >
+                                  <Receipt className="w-3.5 h-3.5" /> Receipt
+                                </button>
+                                {o.status === "DELIVERED" &&
+                                  (() => {
+                                    const alreadyReviewed = stories.some(
+                                      (s) =>
+                                        s.story_type === "BUYER_REVIEW" &&
+                                        ((s.order_id && Number(s.order_id) === Number(o.id)) ||
+                                          (s.author_name === user?.full_name &&
+                                            ((s.product_id &&
+                                              Number(s.product_id) === Number(o.product)) ||
+                                              (s.product_name || s.title || "")
+                                                .toLowerCase()
+                                                .includes((o.product_name || "").toLowerCase()))))
+                                    );
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setReviewTargetProduct({
+                                            product_id: o.product,
+                                            product_name: o.product_name,
+                                            order_id: o.id,
+                                          });
+                                          setStoryForm({
+                                            title: `${o.product_name} — Fresh & Delivered on Time!`,
+                                            content: "",
+                                            rating: 5,
+                                          });
+                                          setStoryModalOpen(true);
+                                        }}
+                                        className={`px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition cursor-pointer ${
+                                          alreadyReviewed
+                                            ? "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
+                                            : "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-2xs"
+                                        }`}
+                                        title="Rate & review this delivered product"
+                                      >
+                                        <Star className="w-3.5 h-3.5 fill-current" />
+                                        {alreadyReviewed ? "Add / Update Review" : "Write Review"}
+                                      </button>
+                                    );
+                                  })()}
+                                {matchedProductForReorder &&
+                                  Number(matchedProductForReorder.stock_quantity) > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddToBasket(matchedProductForReorder, 1)}
+                                      className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-[#14532D] text-xs font-bold transition cursor-pointer"
+                                      title="Add this produce item to basket again"
+                                    >
+                                      ↻ Buy Again
+                                    </button>
+                                  )}
+                                {o.status === "PENDING" && (
+                                  <button
+                                    onClick={() => handleCancelOrder(o.id)}
+                                    className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Daraz-Style 3-Step Visual Order Progress Tracker */}
+                          {o.status === "CANCELLED" ? (
+                            <div className="bg-red-50/80 border border-red-200/80 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-red-700 font-semibold">
+                              <span>✕ This order was cancelled and stock has been restored.</span>
+                              <span className="text-[11px] font-bold uppercase">Cancelled</span>
+                            </div>
+                          ) : (
+                            <div className="bg-slate-50/90 border border-slate-200/70 rounded-xl p-3">
+                              <div className="grid grid-cols-3 gap-2 relative">
+                                {[
+                                  { step: 1, title: "1. Order Placed", sub: "Received by Hub" },
+                                  {
+                                    step: 2,
+                                    title: "2. Confirmed & Packing",
+                                    sub:
+                                      discPct > 0
+                                        ? `Approved (${discPct}% OFF)`
+                                        : "Quality Checked",
+                                  },
+                                  {
+                                    step: 3,
+                                    title: "3. Delivered",
+                                    sub: "Handed to Customer",
+                                  },
+                                ].map((st) => {
+                                  const done = stepIdx >= st.step;
+                                  const current = stepIdx === st.step;
+                                  return (
+                                    <div
+                                      key={st.step}
+                                      className="flex flex-col items-center text-center"
+                                    >
+                                      <div
+                                        className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center transition ${
+                                          done
+                                            ? "bg-[#14532D] text-white shadow-2xs"
+                                            : "bg-slate-200 text-slate-500"
+                                        } ${current ? "ring-4 ring-emerald-200/80" : ""}`}
+                                      >
+                                        {done ? "✓" : st.step}
+                                      </div>
+                                      <p
+                                        className={`text-[11px] font-extrabold mt-1 ${
+                                          done ? "text-[#14532D]" : "text-slate-400"
+                                        }`}
+                                      >
+                                        {st.title}
+                                      </p>
+                                      <p className="text-[9px] text-slate-400 hidden sm:block">
+                                        {st.sub}
+                                      </p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* HYBRID SMART PAGINATION + "SHOW MORE" DOCK (MY HARVEST ORDERS) */}
+                {totalFilteredOrders > 0 && (
+                  <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs space-y-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="font-bold text-slate-600">
+                        Showing{" "}
+                        <strong className="text-slate-900">
+                          {orderStartIdx + 1}–{orderEndIdx}
+                        </strong>{" "}
+                        of <strong className="text-[#14532D]">{totalFilteredOrders}</strong> orders
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#14532D] text-[11px] font-extrabold">
+                        Page {safeOrderPage} of {totalOrderPages} • {orderProgressPct}% Viewed
+                      </span>
+                    </div>
+
+                    {/* Visual Progress Bar */}
+                    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#14532D] to-emerald-500 rounded-full transition-all duration-300"
+                        style={{ width: `${orderProgressPct}%` }}
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      {/* Left: Progressive "+ Show Next 4 Orders" & "Show Less" Buttons */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {remainingOrdersBelow > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setOrdersExtraShown((prev) => prev + ordersPageSize)}
+                            className="px-4 py-2 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-xs font-extrabold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-amber-300" />
+                            <span>
+                              Show Next {Math.min(ordersPageSize, remainingOrdersBelow)} Orders (
+                              {remainingOrdersBelow} left)
+                            </span>
+                          </button>
+                        )}
+                        {ordersExtraShown > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setOrdersExtraShown(0)}
+                            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold transition cursor-pointer"
+                          >
+                            ↑ Show Less (Reset to {ordersPageSize})
+                          </button>
+                        )}
+                        {remainingOrdersBelow > ordersPageSize && (
+                          <button
+                            type="button"
+                            onClick={() => setOrdersExtraShown(totalFilteredOrders)}
+                            className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] border border-emerald-200 text-xs font-bold transition cursor-pointer"
+                          >
+                            View All ({totalFilteredOrders})
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Right: Numbered Page Switcher */}
+                      {totalOrderPages > 1 && (
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            disabled={safeOrderPage <= 1}
+                            onClick={() => {
+                              setOrdersCurrentPage((p) => Math.max(1, p - 1));
+                              setOrdersExtraShown(0);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 text-xs font-extrabold text-slate-700 cursor-pointer"
+                          >
+                            ← Prev
+                          </button>
+                          {Array.from({ length: totalOrderPages }, (_, i) => i + 1).map(
+                            (pageNum) => (
+                              <button
+                                key={pageNum}
+                                type="button"
+                                onClick={() => {
+                                  setOrdersCurrentPage(pageNum);
+                                  setOrdersExtraShown(0);
+                                }}
+                                className={`w-8 h-8 rounded-xl text-xs font-black transition cursor-pointer ${
+                                  safeOrderPage === pageNum
+                                    ? "bg-[#14532D] text-amber-300 shadow-xs"
+                                    : "bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            )
+                          )}
+                          <button
+                            type="button"
+                            disabled={safeOrderPage >= totalOrderPages}
+                            onClick={() => {
+                              setOrdersCurrentPage((p) => Math.min(totalOrderPages, p + 1));
+                              setOrdersExtraShown(0);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 text-xs font-extrabold text-slate-700 cursor-pointer"
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ALIGNED BOTTOM FEATURE: "BUY AGAIN • YOUR FREQUENTLY ORDERED FARM PICKS" */}
+                {frequentOrderedPicks.length > 0 && (
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-2xs space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                          ↻ 1-TAP QUICK REORDER FROM YOUR HISTORY
+                        </span>
+                        <h3 className="text-base sm:text-lg font-black text-slate-900">
+                          Buy Again • Your Favorite Farm Harvests
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setBasketDrawerOpen(true)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#14532D] text-xs font-extrabold cursor-pointer transition"
+                      >
+                        🛍️ Open Basket ({totalBasketItems})
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                      {frequentOrderedPicks.map((item) => {
+                        const prod = item.product;
+                        const imgUrl = getProductImage(prod);
+                        const inCart = basket.find((b) => Number(b.id) === Number(prod.id));
+                        return (
+                          <div
+                            key={item.key}
+                            className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-3 flex flex-col justify-between gap-2.5 hover:bg-white hover:shadow-sm transition"
+                          >
+                            <div className="space-y-2">
+                              <div className="relative h-24 rounded-xl overflow-hidden bg-white border border-slate-100">
+                                <img
+                                  src={imgUrl}
+                                  alt={item.name}
+                                  className="w-full h-full object-cover"
+                                />
+                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full bg-slate-900/80 text-amber-300 text-[9px] font-black">
+                                  Ordered {item.orderCount}x
+                                </span>
+                              </div>
+                              <div>
+                                <h4 className="font-extrabold text-xs sm:text-sm text-slate-900 line-clamp-1">
+                                  {item.name}
+                                </h4>
+                                <p className="text-[11px] font-black text-[#14532D] mt-0.5">
+                                  रु {item.price.toFixed(0)}{" "}
+                                  <span className="font-normal text-slate-500">/{item.unit}</span>
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  Total bought: {item.totalQty} {item.unit}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleAddToBasket(prod, 1)}
+                              className="w-full py-2 px-2.5 rounded-xl bg-[#14532D] hover:bg-[#1B4332] text-white text-[11px] font-extrabold flex items-center justify-center gap-1 transition cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-amber-300" />
+                              <span>
+                                {inCart ? `In Basket (${inCart.qty})` : "↻ Reorder +1"}
+                              </span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
+
+            {/* IN-APP CUSTOMER DELIVERY ROUTE MAP MODAL */}
+            {customerRouteModalOrder && (() => {
+              const rPricing = getCustomerOrderPricing(customerRouteModalOrder);
+              return (
+                <div
+                  className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
+                  onClick={() => setCustomerRouteModalOrder(null)}
+                >
+                  <div
+                    className="bg-white rounded-3xl max-w-2xl w-full p-4 sm:p-6 border border-slate-200 shadow-2xl space-y-4"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-[#14532D] text-[10px] font-black uppercase">
+                          🗺️ Live Hub-to-Home Delivery Route • #KM-ORD-{customerRouteModalOrder.id}
+                        </span>
+                        <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1">
+                          {customerRouteModalOrder.product_name} ({customerRouteModalOrder.quantity}{" "}
+                          {customerRouteModalOrder.product_unit})
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          📍 {customerRouteModalOrder.delivery_address}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCustomerRouteModalOrder(null)}
+                        className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <CustomerOrderRouteMap
+                      lat={rPricing.deliveryLat}
+                      lng={rPricing.deliveryLng}
+                      addressLabel={customerRouteModalOrder.delivery_address}
+                      distanceKm={rPricing.distanceKm}
+                      isFreeDelivery={rPricing.isFreeDelivery}
+                      deliveryCharge={rPricing.deliveryCharge}
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
+                      <div className="space-y-0.5">
+                        <p className="text-slate-500">
+                          Hub: <strong className="text-slate-800">{KRISHIMART_HUB.dms}</strong>
+                        </p>
+                        <p className="font-extrabold text-[#14532D]">
+                          Road Distance: {rPricing.distanceKm ?? "—"} km • Home Delivery:{" "}
+                          {rPricing.isFreeDelivery
+                            ? "FREE (>6 kg within 7 km)"
+                            : `रु ${rPricing.deliveryCharge.toFixed(2)}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://www.google.com/maps/dir/${KRISHIMART_HUB.lat},${KRISHIMART_HUB.lng}/${rPricing.deliveryLat},${rPricing.deliveryLng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs transition"
+                        >
+                          ↗ Open in Google Maps
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => setCustomerRouteModalOrder(null)}
+                          className="px-4 py-2 rounded-xl bg-[#14532D] text-white font-extrabold text-xs cursor-pointer"
+                        >
+                          Close Map
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           );
         })()}
