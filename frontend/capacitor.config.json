@@ -1,0 +1,32 @@
+{
+  "appId": "np.com.krishimart.app",
+  "appName": "KrishiMart Nepal",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "allowNavigation": [
+      "krishimart-backend.onrender.com",
+      "*.onrender.com",
+      "router.project-osrm.org",
+      "*.tile.openstreetmap.org"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "scrollEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#0F3822",
+      "showSpinner": false
+    }
+  }
+}

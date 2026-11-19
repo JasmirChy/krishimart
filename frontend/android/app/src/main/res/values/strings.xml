@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KrishiMart Nepal</string>
+    <string name="title_activity_main">KrishiMart Nepal</string>
+    <string name="package_name">np.com.krishimart.app</string>
+    <string name="custom_url_scheme">np.com.krishimart.app</string>
+</resources>
